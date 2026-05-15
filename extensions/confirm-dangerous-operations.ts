@@ -7,6 +7,23 @@ type Hazard = {
     pattern: RegExp;
 };
 
+type DangerousOperationAction = "allow" | "block" | "explain";
+
+type ExplanationRequest = {
+    command: string;
+    normalizedCommand: string;
+    reasons: string[];
+    requestedAt: number;
+    count: number;
+    explanation?: string;
+    explainedAt?: number;
+};
+
+type ContentBlock = {
+    type?: string;
+    text?: string;
+};
+
 const protectedSystemRoots = [
     "/Applications",
     "/bin",
@@ -134,6 +151,86 @@ function summarizeCommand(command: string): string {
     return `${singleLine.slice(0, 700)}…`;
 }
 
+function normalizeCommandKey(command: string): string {
+    return command.replace(/\r\n?/g, "\n").trim();
+}
+
+function pruneExplanationRequests(
+    explanationRequests: Map<string, ExplanationRequest>,
+    maxAgeMs = 60 * 60 * 1000,
+): void {
+    const now = Date.now();
+    for (const [key, request] of explanationRequests) {
+        if (now - request.requestedAt > maxAgeMs) {
+            explanationRequests.delete(key);
+        }
+    }
+}
+
+function getExplanationRequest(
+    explanationRequests: Map<string, ExplanationRequest>,
+    command: string,
+): ExplanationRequest | undefined {
+    pruneExplanationRequests(explanationRequests);
+    return explanationRequests.get(normalizeCommandKey(command));
+}
+
+function recordExplanationRequest(
+    explanationRequests: Map<string, ExplanationRequest>,
+    command: string,
+    reasons: string[],
+): string {
+    pruneExplanationRequests(explanationRequests);
+
+    const normalizedCommand = normalizeCommandKey(command);
+    const existing = explanationRequests.get(normalizedCommand);
+    explanationRequests.set(normalizedCommand, {
+        command,
+        normalizedCommand,
+        reasons,
+        requestedAt: Date.now(),
+        count: (existing?.count ?? 0) + 1,
+        explanation: existing?.explanation,
+        explainedAt: existing?.explainedAt,
+    });
+
+    return normalizedCommand;
+}
+
+function extractTextParts(content: unknown): string[] {
+    if (typeof content === "string") return [content];
+    if (!Array.isArray(content)) return [];
+
+    const textParts: string[] = [];
+    for (const part of content) {
+        if (!part || typeof part !== "object") continue;
+
+        const block = part as ContentBlock;
+        if (block.type === "text" && typeof block.text === "string") {
+            textParts.push(block.text);
+        }
+    }
+
+    return textParts;
+}
+
+function extractDangerousCommandExplanation(text: string): string | undefined {
+    const match = text.match(/```dangerous-command-explanation\s*\n([\s\S]*?)```/i);
+    if (!match) return undefined;
+
+    return `\`\`\`dangerous-command-explanation\n${match[1].trim()}\n\`\`\``;
+}
+
+function formatExplanationForDisplay(explanation: string): string {
+    const unfenced = explanation
+        .replace(/^```dangerous-command-explanation\s*\n/i, "")
+        .replace(/\n```$/i, "")
+        .trim();
+
+    if (unfenced.length <= 1200) return unfenced;
+    return `${unfenced.slice(0, 1200)}…`;
+}
+
 async function confirmDangerousOperation(
     title: string,
     details: string,
@@ -150,21 +247,40 @@ async function confirmDangerousOperation(
     return ctx.ui.confirm(title, message);
 }
 
-async function confirmDangerousCommand(
+async function chooseDangerousCommandAction(
     command: string,
     reasons: string[],
+    priorExplanationRequest: ExplanationRequest | undefined,
     ctx: ExtensionContext,
-): Promise<boolean> {
-    return confirmDangerousOperation(
-        "Allow potentially dangerous bash command?",
-        `Command:\n${summarizeCommand(command)}`,
-        reasons,
-        ctx,
-    );
+): Promise<DangerousOperationAction> {
+    if (!ctx.hasUI) {
+        return "block";
+    }
+
+    const reasonText = reasons.map((reason) => `• ${reason}`).join("\n");
+    const priorExplanationText = priorExplanationRequest?.explanation
+        ? `\n\nPrevious explanation:\n${formatExplanationForDisplay(priorExplanationRequest.explanation)}`
+        : priorExplanationRequest
+            ? `\n\nNote: an explanation was requested for this command during this session, but no formatted explanation has been captured yet.`
+            : "";
+    const message = `Allow potentially dangerous bash command?\n\n${reasonText}\n\nCommand:\n${summarizeCommand(command)}${priorExplanationText}`;
+
+    const allowLabel = "Allow once";
+    const blockLabel = "Block";
+    const explainLabel = "Explain";
+
+    const choice = await ctx.ui.select(message, [allowLabel, blockLabel, explainLabel]);
+    if (choice === allowLabel) return "allow";
+    if (choice === explainLabel) return "explain";
+    return "block";
 }
 
 function blockedOutput(reasons: string[]): string {
     return `Blocked potentially dangerous operation: ${reasons.join(", ")}`;
+}
+
+function explanationRequestOutput(command: string, reasons: string[]): string {
+    return `Blocked potentially dangerous operation pending explanation: ${reasons.join(", ")}\n\nBefore retrying this command, respond using exactly this format:\n\n\`\`\`dangerous-command-explanation\ntools: <comma-separated command-line programs invoked by the bash command, such as rm, git, gh, curl, or docker; do not list the Pi bash tool itself: ${summarizeCommand(command)}>\ndescription: <plainly describe the effect of this tool call, without mentioning the tool or command name and without explaining why it is used>\nreason: <the actual reason for using this tool call>\nrisk: <low|medium|high|extreme>\n\`\`\`\n\nUse exactly these four keys. Keep each value on a single line. Do not retry the command until the user explicitly approves.`;
 }
 
 function extractToolPath(input: unknown): string | undefined {
@@ -176,14 +292,45 @@ function extractToolPath(input: unknown): string | undefined {
 }
 
 export default function (pi: ExtensionAPI) {
+    const explanationRequests = new Map<string, ExplanationRequest>();
+    const pendingExplanationCommandKeys = new Set<string>();
+
+    pi.on("message_end", async (event) => {
+        if (pendingExplanationCommandKeys.size === 0) return;
+        if (event.message.role !== "assistant") return;
+
+        const text = extractTextParts(event.message.content).join("\n").trim();
+        if (!text) return;
+
+        const explanation = extractDangerousCommandExplanation(text);
+        if (!explanation) return;
+
+        const now = Date.now();
+        for (const key of pendingExplanationCommandKeys) {
+            const request = explanationRequests.get(key);
+            if (!request) continue;
+
+            request.explanation = explanation;
+            request.explainedAt = now;
+        }
+        pendingExplanationCommandKeys.clear();
+    });
+
     pi.on("tool_call", async (event, ctx) => {
         if (event.toolName === "bash") {
             const command = String((event.input as { command?: unknown }).command ?? "");
             const reasons = detectHazards(command);
             if (reasons.length === 0) return undefined;
 
-            const allowed = await confirmDangerousCommand(command, reasons, ctx);
-            if (allowed) return undefined;
+            const priorExplanationRequest = getExplanationRequest(explanationRequests, command);
+            const action = await chooseDangerousCommandAction(command, reasons, priorExplanationRequest, ctx);
+            if (action === "allow") return undefined;
+
+            if (action === "explain") {
+                const commandKey = recordExplanationRequest(explanationRequests, command, reasons);
+                pendingExplanationCommandKeys.add(commandKey);
+                return { block: true, reason: explanationRequestOutput(command, reasons) };
+            }
 
             return { block: true, reason: blockedOutput(reasons) };
         }
@@ -211,12 +358,22 @@ export default function (pi: ExtensionAPI) {
         const reasons = detectHazards(event.command);
         if (reasons.length === 0) return undefined;
 
-        const allowed = await confirmDangerousCommand(event.command, reasons, ctx);
-        if (allowed) return undefined;
+        const priorExplanationRequest = getExplanationRequest(explanationRequests, event.command);
+        const action = await chooseDangerousCommandAction(event.command, reasons, priorExplanationRequest, ctx);
+        if (action === "allow") return undefined;
+
+        const output = action === "explain"
+            ? explanationRequestOutput(event.command, reasons)
+            : blockedOutput(reasons);
+
+        if (action === "explain") {
+            const commandKey = recordExplanationRequest(explanationRequests, event.command, reasons);
+            pendingExplanationCommandKeys.add(commandKey);
+        }
 
         return {
             result: {
-                output: blockedOutput(reasons),
+                output,
                 exitCode: 126,
                 cancelled: false,
                 truncated: false,
