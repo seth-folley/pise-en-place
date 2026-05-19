@@ -59,6 +59,10 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 - **Interactive questioning component** — Extract the interactive picker/question flow used by skill updates into a reusable component for commands that need guided user input.
 
+### TUI and process display
+
+- **Spawned Pi output pane** — Show output from newly spawned Pi instances in a smaller TUI window.
+
 ## Ideas
 
 ### Project documentation and upkeep
