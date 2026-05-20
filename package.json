@@ -48,8 +48,7 @@
       "./extensions/ui/interactive-agent-questions.ts",
       "./extensions/productivity/copy-session-id.ts",
       "./extensions/productivity/local-share.ts",
-      "./extensions/productivity/roadmap-writer.ts",
-      "./extensions/integrations/supacode/index.ts"
+      "./extensions/productivity/roadmap-writer.ts"
     ]
   },
   "peerDependencies": {

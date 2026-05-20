@@ -1,6 +1,6 @@
 # pise-en-place
 
-Personal Pi extension package for safety checks, usage tracking, status UI, skill upkeep, sharing helpers, and local workflow integrations.
+Personal Pi extension package for safety checks, usage tracking, status UI, skill upkeep, and sharing helpers.
 
 ## Install as a local Pi package
 
@@ -27,7 +27,6 @@ extensions/
   skills/          skill read tracking and skill update flows
   ui/              status line, response timing, ask_user UI tool
   productivity/    local sharing, session helpers, roadmap writer
-  integrations/    external integrations such as Supacode
 src/shared/        shared implementation helpers used by extensions
 docs/              design notes and user-facing docs
 ```

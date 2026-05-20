@@ -37,10 +37,6 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 - **Interactive questioning component** — Extracts the tabbed question flow into a reusable component and exposes `ask_user` so agents can ask one or many guided interactive questions, including optional custom answers.
 
-### Supacode integration
-
-- **Supacode integration** — Reports Pi agent busy state and completion notifications to Supacode-managed terminals.
-
 ## Todos
 
 ### Project documentation and upkeep
