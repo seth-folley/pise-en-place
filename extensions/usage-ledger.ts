@@ -26,10 +26,11 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const ledgerDir = path.join(os.homedir(), ".pi", "agent", "usage");
 const ledgerPath = path.join(ledgerDir, "ledger.jsonl");
+const skillReadLedgerPath = path.join(os.homedir(), ".pi", "agent", "skill-reads", "ledger.jsonl");
 const schemaVersion = 1;
 
 type UsageRange = "today" | "week" | "month" | "lifetime";
-type UsageMode = "summary" | "project" | "model" | "clear";
+type UsageMode = "summary" | "project" | "model" | "skills" | "clear";
 
 type ProjectInfo = {
 	name: string | null;
@@ -74,6 +75,7 @@ type ParsedUsageCommand = {
 	help: boolean;
 	yes: boolean;
 	project?: string;
+	groupByProject?: boolean;
 	model?: string;
 	error?: string;
 };
@@ -99,6 +101,30 @@ type SessionEntry = {
 	type: string;
 	id?: string;
 	message?: any;
+};
+
+type SkillReadRecord = {
+	version: 1;
+	id: string;
+	timestamp: string;
+	recordedAt: string;
+	trigger: "skill-command" | "read-tool";
+	sessionFile: string | null;
+	sessionId: string | null;
+	cwd: string | null;
+	project?: ProjectInfo;
+	skill: {
+		name: string;
+		path: string | null;
+		scope: string | null;
+		source: string | null;
+	};
+	toolCallId?: string;
+};
+
+type SkillReadLedgerReadResult = {
+	records: SkillReadRecord[];
+	skippedLines: number;
 };
 
 // Pi command handlers receive the full argument tail as a single string. This
@@ -179,9 +205,13 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 		}
 
 		if (token === "--project") {
-			const value = tokens[++i];
-			if (!value) return { ...command, error: "Missing value for --project" };
-			command.project = value;
+			const value = tokens[i + 1];
+			if (!value || value.startsWith("--")) {
+				command.groupByProject = true;
+			} else {
+				command.project = value;
+				i += 1;
+			}
 			continue;
 		}
 
@@ -197,12 +227,16 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 	}
 
 	const first = positionals[0];
-	if (!first) return command;
+	if (!first) {
+		if (command.groupByProject) return { ...command, error: "Missing value for --project" };
+		return command;
+	}
 
 	if (first === "project") {
 		command.mode = "project";
 		command.range = "lifetime";
 		if (positionals.length > 1) command.project = positionals.slice(1).join(" ");
+		if (command.groupByProject) return { ...command, error: "Missing value for --project" };
 		if (!command.list && !command.project) return { ...command, error: "Usage: /usage project --list or /usage project <project>" };
 		return command;
 	}
@@ -211,7 +245,19 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 		command.mode = "model";
 		command.range = "lifetime";
 		if (positionals.length > 1) command.model = positionals.slice(1).join(" ");
+		if (command.groupByProject) return { ...command, error: "Missing value for --project" };
 		if (!command.list && !command.model) return { ...command, error: "Usage: /usage model --list or /usage model <model>" };
+		return command;
+	}
+
+	if (first === "skills") {
+		command.mode = "skills";
+		if (positionals.length > 1) {
+			const range = positionals[1];
+			if (!["today", "week", "month", "lifetime"].includes(range)) return { ...command, error: `Unknown skills range: ${range}` };
+			command.range = range as UsageRange;
+		}
+		if (positionals.length > 2) return { ...command, error: `Unexpected argument: ${positionals[2]}` };
 		return command;
 	}
 
@@ -223,10 +269,12 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 
 	if (["today", "week", "month", "lifetime"].includes(first)) {
 		command.range = first as UsageRange;
+		if (command.groupByProject) return { ...command, error: "Missing value for --project" };
 		if (positionals.length > 1) return { ...command, error: `Unexpected argument: ${positionals[1]}` };
 		return command;
 	}
 
+	if (command.groupByProject) return { ...command, error: "Missing value for --project" };
 	return { ...command, error: `Unknown usage command: ${first}` };
 }
 
@@ -274,6 +322,25 @@ function getProjectLabels(record: UsageLedgerRecord): string[] {
 
 function matchesProject(record: UsageLedgerRecord, project: string): boolean {
 	return getProjectLabels(record).includes(project);
+}
+
+function getSkillReadProjectKey(record: SkillReadRecord): string {
+	return record.project?.gitRemote ?? record.project?.gitCommonDir ?? record.project?.gitRoot ?? record.cwd ?? "unknown";
+}
+
+function getSkillReadProjectLabels(record: SkillReadRecord): string[] {
+	return [
+		getSkillReadProjectKey(record),
+		record.project?.name,
+		record.project?.gitRemote,
+		record.project?.gitRoot,
+		record.project?.gitCommonDir,
+		record.cwd,
+	].filter((value): value is string => Boolean(value));
+}
+
+function matchesSkillReadProject(record: SkillReadRecord, project: string): boolean {
+	return getSkillReadProjectLabels(record).includes(project);
 }
 
 // Include provider in the display key so identically named models from different
@@ -393,10 +460,13 @@ function formatHelp(json: boolean): string {
 			{ command: "/usage project <project>", description: "Show lifetime usage for a project" },
 			{ command: "/usage model --list", description: "List recorded models" },
 			{ command: "/usage model <model>", description: "Show lifetime usage for a model" },
+			{ command: "/usage skills [range]", description: "Show skill usage counts" },
+			{ command: "/usage skills --project", description: "Group skill usage by project" },
 			{ command: "/usage clear", description: "Clear the usage ledger after confirmation" },
 		],
 		options: [
-			{ option: "--project <project>", description: "Filter a time range by project" },
+			{ option: "--project <project>", description: "Filter a time range or skill report by project" },
+			{ option: "--project", description: "With /usage skills, group skill usage by project" },
 			{ option: "--model <model>", description: "Filter a time range by model" },
 			{ option: "--list", description: "List values for project/model commands" },
 			{ option: "--json", description: "Emit machine-readable JSON" },
@@ -422,6 +492,81 @@ function formatList(kind: "project" | "model", items: string[], skippedLines: nu
 	const lines = [title, ...(items.length ? items.map((item) => `- ${item}`) : ["No usage records found."])] ;
 	if (skippedLines) lines.push(`Skipped corrupt ledger lines: ${skippedLines}`);
 	return lines.join("\n");
+}
+
+function countSkillReads(records: SkillReadRecord[]): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const record of records) counts.set(record.skill.name, (counts.get(record.skill.name) ?? 0) + 1);
+	return counts;
+}
+
+function sortedCounts(counts: Map<string, number>): Array<[string, number]> {
+	return Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+function filterSkillReads(records: SkillReadRecord[], options: { range: UsageRange; project?: string }): SkillReadRecord[] {
+	return records.filter((record) => {
+		if (!inRange({ timestamp: record.timestamp } as UsageLedgerRecord, options.range)) return false;
+		if (options.project && !matchesSkillReadProject(record, options.project)) return false;
+		return true;
+	});
+}
+
+function formatSkillUsageSummary(records: SkillReadRecord[], options: { range: UsageRange; project?: string; skippedLines: number }): string {
+	const filtered = filterSkillReads(records, options);
+	const counts = sortedCounts(countSkillReads(filtered));
+	const titleParts = [`Usage — Skills`, titleForRange(options.range)];
+	if (options.project) titleParts.push(`project: ${options.project}`);
+	const lines = [
+		titleParts.join(" • "),
+		`Skill invocations: ${filtered.length}  Projects: ${new Set(filtered.map(getSkillReadProjectKey)).size}`,
+		"",
+		"Skills:",
+		...(counts.length ? counts.map(([name, count]) => `- ${name}: ${count}`) : ["No skill reads found."]),
+	];
+	if (options.skippedLines) lines.push(`Skipped corrupt skill-read ledger lines: ${options.skippedLines}`);
+	return lines.join("\n");
+}
+
+function formatSkillUsageByProject(records: SkillReadRecord[], options: { range: UsageRange; skippedLines: number }): string {
+	const filtered = filterSkillReads(records, { range: options.range });
+	const byProject = new Map<string, SkillReadRecord[]>();
+	for (const record of filtered) {
+		const key = getSkillReadProjectKey(record);
+		byProject.set(key, [...(byProject.get(key) ?? []), record]);
+	}
+
+	const projectEntries = Array.from(byProject.entries()).sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+	const lines = [`Usage — Skills by project • ${titleForRange(options.range)}`];
+	if (!projectEntries.length) lines.push("", "No skill reads found.");
+	for (const [project, projectRecords] of projectEntries) {
+		lines.push("", `${project} — ${projectRecords.length} invocations`);
+		for (const [name, count] of sortedCounts(countSkillReads(projectRecords))) lines.push(`- ${name}: ${count}`);
+	}
+	if (options.skippedLines) lines.push(`Skipped corrupt skill-read ledger lines: ${options.skippedLines}`);
+	return lines.join("\n");
+}
+
+function summarizeSkillUsage(records: SkillReadRecord[], options: { range: UsageRange; project?: string; groupByProject?: boolean; skippedLines: number }) {
+	const filtered = filterSkillReads(records, { range: options.range, project: options.project });
+	const bySkill = Object.fromEntries(sortedCounts(countSkillReads(filtered)));
+	if (!options.groupByProject) {
+		return {
+			range: options.range,
+			filter: { project: options.project },
+			invocations: filtered.length,
+			projects: new Set(filtered.map(getSkillReadProjectKey)).size,
+			skills: bySkill,
+			skippedLines: options.skippedLines,
+		};
+	}
+
+	const projects: Record<string, { invocations: number; skills: Record<string, number> }> = {};
+	for (const project of Array.from(new Set(filtered.map(getSkillReadProjectKey))).sort((a, b) => a.localeCompare(b))) {
+		const projectRecords = filtered.filter((record) => getSkillReadProjectKey(record) === project);
+		projects[project] = { invocations: projectRecords.length, skills: Object.fromEntries(sortedCounts(countSkillReads(projectRecords))) };
+	}
+	return { range: options.range, groupByProject: true, invocations: filtered.length, projects, skippedLines: options.skippedLines };
 }
 
 async function ensureLedgerDir(): Promise<void> {
@@ -479,6 +624,34 @@ async function readLedgerRecords(): Promise<LedgerReadResult> {
 		}
 	}
 
+	return { records, skippedLines };
+}
+
+function isSkillReadRecord(value: any): value is SkillReadRecord {
+	return value && value.version === schemaVersion && typeof value.id === "string" && value.skill && typeof value.skill.name === "string";
+}
+
+async function readSkillReadRecords(): Promise<SkillReadLedgerReadResult> {
+	let text: string;
+	try {
+		text = await fs.readFile(skillReadLedgerPath, "utf8");
+	} catch (error: any) {
+		if (error?.code === "ENOENT") return { records: [], skippedLines: 0 };
+		throw error;
+	}
+
+	const records: SkillReadRecord[] = [];
+	let skippedLines = 0;
+	for (const line of text.split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			const parsed = JSON.parse(line);
+			if (isSkillReadRecord(parsed)) records.push(parsed);
+			else skippedLines += 1;
+		} catch {
+			skippedLines += 1;
+		}
+	}
 	return { records, skippedLines };
 }
 
@@ -648,6 +821,23 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 			parsed.json ? JSON.stringify({ ok: true, deleted, ledgerPath }, null, 2) : deleted ? "Usage ledger cleared." : "Usage ledger was already empty.",
 			parsed.json,
 		);
+		return;
+	}
+
+	if (parsed.mode === "skills") {
+		const { records, skippedLines } = await readSkillReadRecords();
+		if (parsed.project && !records.some((record) => matchesSkillReadProject(record, parsed.project!))) {
+			const projects = Array.from(new Set(records.map(getSkillReadProjectKey))).sort((a, b) => a.localeCompare(b));
+			const error = `No skill read records found for project "${parsed.project}". Try /usage skills --project.`;
+			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error, projects, skippedLines }, null, 2) : error, parsed.json);
+			return;
+		}
+
+		const summary = summarizeSkillUsage(records, { range: parsed.range, project: parsed.project, groupByProject: parsed.groupByProject, skippedLines });
+		const text = parsed.groupByProject
+			? formatSkillUsageByProject(records, { range: parsed.range, skippedLines })
+			: formatSkillUsageSummary(records, { range: parsed.range, project: parsed.project, skippedLines });
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, summary }, null, 2) : text, parsed.json);
 		return;
 	}
 

@@ -91,6 +91,20 @@ Models:
 /usage model <model>
 ```
 
+Skills:
+
+```text
+/usage skills
+/usage skills today
+/usage skills week
+/usage skills month
+/usage skills lifetime
+/usage skills --project <project>
+/usage skills --project
+```
+
+`/usage skills --project <project>` filters skill usage to one project. `/usage skills --project` with no value groups skill usage by project.
+
 Clear the ledger:
 
 ```text
@@ -121,6 +135,8 @@ Machine-readable output:
 /usage --json
 /usage project --list --json
 /usage month --project <project> --json
+/usage skills --json
+/usage skills --project --json
 /usage -h --json
 ```
 

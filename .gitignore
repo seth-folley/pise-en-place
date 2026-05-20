@@ -42,8 +42,10 @@ secrets/
 .pi/logs/
 .pi/tmp/
 .pi/usage/
+.pi/skill-reads/
 usage.jsonl
 usage.sqlite
+skill-reads.jsonl
 *.trace
 
 # Logs
