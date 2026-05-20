@@ -87,7 +87,7 @@ export default function (pi: ExtensionAPI) {
 
             if (result.code === 0) {
                 const summary = stdout ? `\n\n${stdout}` : "";
-                ctx.ui.notify(`${roadmapFile} updated outside the current context.${summary}`, "success");
+                ctx.ui.notify(`${roadmapFile} updated outside the current context.${summary}`, "info");
                 return;
             }
 

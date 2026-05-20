@@ -23,7 +23,7 @@ const updateScript = `${process.env.HOME}/.agents/scripts/update-skills.sh`;
 const checkScript = `${process.env.HOME}/.agents/scripts/check-skill-updates.sh`;
 const messageType = "agent-skills-output";
 
-type NotifyLevel = "info" | "warning" | "error" | "success";
+type NotifyLevel = "info" | "warning" | "error";
 type NotifyContext = {
     hasUI: boolean;
     ui: {
@@ -240,7 +240,7 @@ export default function (pi: ExtensionAPI) {
     // Presents available updates with the shared interactive question component.
     // All updates start selected so pressing enter applies the full batch.
     async function chooseUpdates(ctx: NotifyContext, updates: SkillUpdate[]) {
-        return askMultiSelectQuestion(ctx, {
+        return askMultiSelectQuestion<SkillUpdate>(ctx, {
             title: "Skill updates",
             options: updates.map((update) => ({
                 label: update.name,

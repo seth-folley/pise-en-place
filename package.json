@@ -1,0 +1,36 @@
+{
+  "name": "pise-en-place",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seth-folley/pise-en-place.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/seth-folley/pise-en-place/issues"
+  },
+  "homepage": "https://github.com/seth-folley/pise-en-place#readme",
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.75.4",
+    "@earendil-works/pi-coding-agent": "^0.75.4",
+    "@earendil-works/pi-tui": "^0.75.4",
+    "typebox": "^1.1.38"
+  }
+}

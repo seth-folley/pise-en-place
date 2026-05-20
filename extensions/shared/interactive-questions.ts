@@ -10,6 +10,7 @@ export type InteractiveNotifyContext = {
 export type InteractiveQuestionOption<T> = {
     label: string;
     value: T;
+    description?: string;
     selected?: boolean;
     renderDetails?: (option: InteractiveQuestionOption<T>, helpers: InteractiveQuestionRenderHelpers) => string[];
 };

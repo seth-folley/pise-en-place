@@ -21,7 +21,7 @@
  *                       → idle           (defensive activity reset)
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createConnection } from "node:net";
 
 interface SupacodeEnv {

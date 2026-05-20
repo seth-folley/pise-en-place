@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 
 function getPackageDistDir(): string {
     try {
-        return dirname(require.resolve("@mariozechner/pi-coding-agent"));
+        return dirname(require.resolve("@earendil-works/pi-coding-agent"));
     } catch {
         // Project-local extensions may not have pi in local node_modules. In normal pi runs, argv[1] points at
         // pi's CLI entrypoint, so resolve that symlink and use its dist directory instead.

@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 
 let enabled = true;
 let startedAt: bigint | undefined;
@@ -22,7 +22,7 @@ function formatDuration(start: bigint, end: bigint): string {
     return `${minutes}m ${remainingSeconds}s`;
 }
 
-function setStatus(ctx: ExtensionContext, text: string | undefined, color: "accent" | "success" = "accent") {
+function setStatus(ctx: ExtensionContext, text: string | undefined, color: ThemeColor = "accent") {
     if (!ctx.hasUI) return;
     ctx.ui.setStatus("response-time", text ? ctx.ui.theme.fg(color, text) : undefined);
 }

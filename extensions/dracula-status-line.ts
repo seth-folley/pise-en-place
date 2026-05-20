@@ -1,6 +1,6 @@
-import type { AssistantMessage } from "@mariozechner/pi-ai";
-import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@mariozechner/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 type FooterStyle = "dracula" | "minimal" | "off";
 
@@ -189,7 +189,7 @@ export default function (pi: ExtensionAPI) {
             }
 
             const theme = ctx.ui.theme;
-            const example = (label: string, color: string, percent: string, bar: string) =>
+            const example = (label: string, color: ThemeColor, percent: string, bar: string) =>
                 theme.fg("dim", label.padEnd(9)) +
                 theme.fg(color, percent.padStart(4)) +
                 theme.fg("dim", " ") +
