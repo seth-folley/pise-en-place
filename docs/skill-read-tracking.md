@@ -1,6 +1,6 @@
 # Pi Skill Read Tracking
 
-`extensions/skill-read-ledger.ts` tracks when Pi skills are explicitly loaded or read. Reports are shown through `/usage skills` from `extensions/usage-ledger.ts`.
+`extensions/skills/read-ledger.ts` tracks when Pi skills are explicitly loaded or read. Reports are shown through `/usage skills` from `extensions/usage/index.ts`.
 
 ## What is tracked
 

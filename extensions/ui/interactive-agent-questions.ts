@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { askMultiSelectQuestion, askQuestionnaire } from "./shared/interactive-questions.ts";
+import { askMultiSelectQuestion, askQuestionnaire } from "../../src/shared/interactive-questions.ts";
 
 const optionSchema = Type.Object({
     label: Type.String({ description: "Short option label shown to the user" }),

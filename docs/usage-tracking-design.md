@@ -50,7 +50,7 @@ For this extension, we will store raw token counts plus only the total estimated
 A Pi extension:
 
 ```text
-extensions/usage-ledger.ts
+extensions/usage/index.ts
 ```
 
 Optional docs:
@@ -298,7 +298,7 @@ None for v1.
 
 ### Phase 1: Types and Pure Helpers
 
-Create `extensions/usage-ledger.ts` with the core types and pure data-processing helpers first.
+Create `extensions/usage/index.ts` with the core types and pure data-processing helpers first.
 
 Helpers to implement:
 

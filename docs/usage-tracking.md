@@ -1,6 +1,6 @@
 # Usage Ledger Extension
 
-`extensions/usage-ledger.ts` tracks Pi token usage and estimated spending across sessions.
+`extensions/usage/index.ts` tracks Pi token usage and estimated spending across sessions.
 
 ## What it records
 

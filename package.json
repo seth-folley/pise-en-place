@@ -1,19 +1,25 @@
 {
   "name": "pise-en-place",
   "version": "1.0.0",
-  "description": "",
+  "description": "Personal Pi extension package for safety, usage tracking, UI helpers, and workflow integrations.",
   "main": "index.js",
   "directories": {
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "validate": "npm run typecheck && npm run test"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/seth-folley/pise-en-place.git"
   },
-  "keywords": [],
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "pi-package"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
@@ -25,12 +31,39 @@
     "@types/node": "^25.9.1",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
-  },
-  "dependencies": {
+    "vitest": "^4.1.7",
     "@earendil-works/pi-ai": "^0.75.4",
     "@earendil-works/pi-coding-agent": "^0.75.4",
     "@earendil-works/pi-tui": "^0.75.4",
     "typebox": "^1.1.38"
-  }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/safety/index.ts",
+      "./extensions/usage/index.ts",
+      "./extensions/skills/read-ledger.ts",
+      "./extensions/skills/update-agent-skills.ts",
+      "./extensions/ui/dracula-status-line.ts",
+      "./extensions/ui/response-time.ts",
+      "./extensions/ui/interactive-agent-questions.ts",
+      "./extensions/productivity/copy-session-id.ts",
+      "./extensions/productivity/local-share.ts",
+      "./extensions/productivity/roadmap-writer.ts",
+      "./extensions/integrations/supacode/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "files": [
+    "extensions",
+    "src",
+    "docs",
+    "README.md",
+    "ROADMAP.md",
+    "LICENSE"
+  ]
 }

@@ -10,6 +10,7 @@
   },
   "include": [
     "extensions/**/*.ts",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "src/**/*.ts"
   ]
 }

@@ -6,6 +6,7 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 ### Project documentation and upkeep
 
+- **Local Pi package structure** — Declares this repo as a Pi package, groups extensions by domain, and documents local package installation instead of symlinking global extensions.
 - **Runtime file ignores** — Keeps local Pi sessions, usage ledgers, build output, logs, and secrets out of git.
 - **Roadmap writer command** — Adds `/roadmap` to delegate ROADMAP.md edits to an isolated non-interactive Pi process without adding child reasoning to the current context, while still recording usage.
 
@@ -44,11 +45,9 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 ### Project documentation and upkeep
 
-- **README overview** — Add setup instructions, extension list, and recommended Pi configuration.
 - **Extension install guide** — Document how to enable individual extensions from this repo.
 - **Manual test checklist** — Add repeatable checks for commands, hooks, and non-UI behavior.
 - **Type import consistency** — Standardize Pi package imports across extensions.
-- **Package validation scripts** — Add npm scripts for `typecheck`, `test`, and `validate` so extension checks are easy to run consistently.
 - **Extension smoke tests** — Add tests that import/register extensions against a mocked Pi API to catch load and registration failures.
 - **Interactive question tests** — Add Vitest coverage for `ask_user` schema normalization and edge cases such as cancellation, multi-select, empty options with `allowOther`, and custom text.
 - **Roadmap upkeep** — Update this file whenever features are added or priorities change.

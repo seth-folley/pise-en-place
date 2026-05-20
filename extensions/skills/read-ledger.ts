@@ -9,7 +9,7 @@
  * - `/skill:name` command expansion via the input event.
  * - Agent reads of skill files via the built-in read tool.
  *
- * Reporting is handled by `/usage skills` in extensions/usage-ledger.ts.
+ * Reporting is handled by `/usage skills` in extensions/usage/index.ts.
  * The ledger stores metadata only; it never stores skill file contents or prompts.
  */
 

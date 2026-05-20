@@ -2,7 +2,7 @@
 
 ## Goal
 
-Enhance `extensions/confirm-dangerous-operations.ts` so dangerous bash commands can be handled with three user choices:
+Enhance `extensions/safety/index.ts` so dangerous bash commands can be handled with three user choices:
 
 1. **Allow once**
 2. **Block**

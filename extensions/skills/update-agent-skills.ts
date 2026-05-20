@@ -17,7 +17,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { askMultiSelectQuestion } from "./shared/interactive-questions.ts";
+import { askMultiSelectQuestion } from "../../src/shared/interactive-questions.ts";
 
 const updateScript = `${process.env.HOME}/.agents/scripts/update-skills.sh`;
 const checkScript = `${process.env.HOME}/.agents/scripts/check-skill-updates.sh`;
