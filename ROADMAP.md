@@ -32,6 +32,10 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 - **Skill update command** — Adds startup skill update checks and `/update-skills` flows, including an interactive picker.
 
+### Shared interaction components
+
+- **Interactive questioning component** — Extracts the tabbed question flow into a reusable component and exposes `ask_user` so agents can ask one or many guided interactive questions, including optional custom answers.
+
 ### Supacode integration
 
 - **Supacode integration** — Reports Pi agent busy state and completion notifications to Supacode-managed terminals.
@@ -54,10 +58,6 @@ A lightweight place to track what has been added, what is next, and longer-term 
 ### Usage tracking and reporting
 
 - **Usage ledger validation** — Add fixture-based tests for parsing, filtering, summaries, and corrupt JSONL lines.
-
-### Shared interaction components
-
-- **Interactive questioning component** — Extract the interactive picker/question flow used by skill updates into a reusable component for commands that need guided user input.
 
 ### TUI and process display
 

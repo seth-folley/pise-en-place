@@ -15,8 +15,9 @@
  * directly; scripts own manifest validation, pinning, syncing, and diff artifacts.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
+import { askMultiSelectQuestion } from "./shared/interactive-questions.ts";
 
 const updateScript = `${process.env.HOME}/.agents/scripts/update-skills.sh`;
 const checkScript = `${process.env.HOME}/.agents/scripts/check-skill-updates.sh`;
@@ -236,113 +237,37 @@ export default function (pi: ExtensionAPI) {
         return updates.map(formatUpdate).join("\n\n");
     }
 
-    // Presents available updates as tabs and returns the user-selected updates.
-    //
-    // All updates start selected so pressing enter applies the full batch. Users can
-    // switch tabs with arrows/tab, toggle the current skill with space, apply with
-    // enter, or cancel with escape. The UI is intentionally read-only except for the
-    // selected set; manifest mutation happens later through the script contract.
+    // Presents available updates with the shared interactive question component.
+    // All updates start selected so pressing enter applies the full batch.
     async function chooseUpdates(ctx: NotifyContext, updates: SkillUpdate[]) {
-        if (!ctx.hasUI) return [];
+        return askMultiSelectQuestion(ctx, {
+            title: "Skill updates",
+            options: updates.map((update) => ({
+                label: update.name,
+                value: update,
+                selected: true,
+                renderDetails: (_option, { theme, selected, wrap }) => {
+                    const lines: string[] = [];
+                    lines.push(theme.fg("accent", theme.bold(update.name)));
+                    lines.push(`Current: ${theme.fg("error", update.currentRef)}`);
+                    lines.push(`Latest:  ${theme.fg("success", update.latestRef)}`);
+                    lines.push(`Selected: ${selected ? theme.fg("success", "yes") : theme.fg("muted", "no")}`);
 
-        return ctx.ui.custom<SkillUpdate[]>((_tui, theme, _keybindings, done) => {
-            let selectedIndex = 0;
-            const selectedNames = new Set(updates.map((update) => update.name));
-
-            // Returns the update currently shown in the active tab.
-            function selectedUpdate() {
-                return updates[selectedIndex];
-            }
-
-            // Toggles whether the active tab's skill will be updated.
-            function toggleSelected() {
-                const name = selectedUpdate().name;
-                if (selectedNames.has(name)) {
-                    selectedNames.delete(name);
-                } else {
-                    selectedNames.add(name);
-                }
-            }
-
-            // Renders the tab strip, update details, review links, and key hints.
-            function render(width: number) {
-                const safeWidth = Math.max(width, 20);
-                const update = selectedUpdate();
-                const lines: string[] = [];
-
-                lines.push(theme.fg("accent", theme.bold("Skill updates")));
-                lines.push(theme.fg("dim", "←/→ or tab switch • space toggle • enter apply • esc cancel"));
-                lines.push("");
-
-                const tabs = updates.map((candidate, index) => {
-                    const checked = selectedNames.has(candidate.name) ? "✓" : " ";
-                    const label = ` ${checked} ${candidate.name} `;
-                    return index === selectedIndex
-                        ? theme.bg("selectedBg", theme.fg("accent", label))
-                        : theme.fg("muted", label);
-                }).join(" ");
-                lines.push(...wrapTextWithAnsi(tabs, safeWidth));
-                lines.push("");
-
-                lines.push(theme.fg("accent", theme.bold(update.name)));
-                lines.push(`Current: ${theme.fg("error", update.currentRef)}`);
-                lines.push(`Latest:  ${theme.fg("success", update.latestRef)}`);
-                const selectedText = selectedNames.has(update.name)
-                    ? theme.fg("success", "yes")
-                    : theme.fg("muted", "no");
-                lines.push(`Selected: ${selectedText}`);
-
-                if (update.diffURL) {
-                    lines.push("");
-                    lines.push(theme.fg("warning", "Diff:"));
-                    lines.push(...wrapTextWithAnsi(update.diffURL, safeWidth));
-                }
-
-                if (update.changelogURL) {
-                    lines.push("");
-                    lines.push(theme.fg("warning", "Changelog:"));
-                    lines.push(...wrapTextWithAnsi(update.changelogURL, safeWidth));
-                }
-
-                lines.push("");
-                lines.push(theme.fg("dim", `${selectedIndex + 1}/${updates.length} updates`));
-
-                return lines.map((line) => truncateToWidth(line, safeWidth));
-            }
-
-            return {
-                render,
-                invalidate() {},
-                // Handles navigation, selection toggles, apply, and cancel keys.
-                handleInput(data: string) {
-                    if (matchesKey(data, Key.escape)) {
-                        done([]);
-                        return;
+                    if (update.diffURL) {
+                        lines.push("");
+                        lines.push(theme.fg("warning", "Diff:"));
+                        lines.push(...wrap(update.diffURL));
                     }
 
-                    if (matchesKey(data, Key.enter)) {
-                        done(updates.filter((update) => selectedNames.has(update.name)));
-                        return;
+                    if (update.changelogURL) {
+                        lines.push("");
+                        lines.push(theme.fg("warning", "Changelog:"));
+                        lines.push(...wrap(update.changelogURL));
                     }
 
-                    if (matchesKey(data, Key.space)) {
-                        toggleSelected();
-                        _tui.requestRender();
-                        return;
-                    }
-
-                    if (matchesKey(data, Key.left) || matchesKey(data, Key.shift("tab"))) {
-                        selectedIndex = Math.max(0, selectedIndex - 1);
-                        _tui.requestRender();
-                        return;
-                    }
-
-                    if (matchesKey(data, Key.right) || matchesKey(data, Key.tab)) {
-                        selectedIndex = Math.min(updates.length - 1, selectedIndex + 1);
-                        _tui.requestRender();
-                    }
+                    return lines;
                 },
-            };
+            })),
         });
     }
 
