@@ -19,9 +19,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { askQuestionnaire } from "../../src/shared/interactive-questions.ts";
 
 const commandName = "context";
 
@@ -38,9 +39,11 @@ type ContextFileFilterConfig = {
 	projects?: Record<string, ProjectRule>;
 };
 
-type SettingsWithContextFilter = {
+type SettingsWithContextFilter = Record<string, unknown> & {
 	contextFileFilter?: ContextFileFilterConfig;
 };
+
+type ContextConfigAnswer = "enabled" | "disabled" | string;
 
 type ProjectInfo = {
 	id?: string;
@@ -71,10 +74,16 @@ function expandHome(value: string): string {
 function readJsonFile(filePath: string): SettingsWithContextFilter {
 	try {
 		if (!existsSync(filePath)) return {};
-		return JSON.parse(readFileSync(filePath, "utf8")) as SettingsWithContextFilter;
+		const parsed = JSON.parse(readFileSync(filePath, "utf8"));
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as SettingsWithContextFilter : {};
 	} catch {
 		return {};
 	}
+}
+
+function writeJsonFile(filePath: string, value: SettingsWithContextFilter): void {
+	mkdirSync(path.dirname(filePath), { recursive: true });
+	writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function mergeConfig(globalConfig?: ContextFileFilterConfig, projectConfig?: ContextFileFilterConfig): ContextFileFilterConfig | undefined {
@@ -283,6 +292,69 @@ function formatStatus(state: ActiveRuleState, cwd: string, lastLoadedPaths: stri
 	return lines.join("\n");
 }
 
+function isContextCandidate(fileName: string): boolean {
+	return /^(AGENTS|CLAUDE|CODEX)\.md$/i.test(fileName);
+}
+
+function discoverContextCandidates(cwd: string): string[] {
+	const ignoredDirs = new Set([".git", ".pi", "node_modules", "dist", "build", "DerivedData"]);
+	const candidates: string[] = [];
+
+	function walk(directory: string): void {
+		let entries;
+		try {
+			entries = readdirSync(directory, { withFileTypes: true });
+		} catch {
+			return;
+		}
+
+		for (const entry of entries) {
+			const fullPath = path.join(directory, entry.name);
+			if (entry.isDirectory()) {
+				if (!ignoredDirs.has(entry.name)) walk(fullPath);
+				continue;
+			}
+
+			if (entry.isFile() && isContextCandidate(entry.name)) {
+				candidates.push(toPosixPath(path.relative(cwd, fullPath)));
+			}
+		}
+	}
+
+	walk(cwd);
+	return candidates.sort((a, b) => a.localeCompare(b));
+}
+
+function mergeCandidateAndConfiguredPaths(candidates: string[], configured: string[]): string[] {
+	return Array.from(new Set([...candidates, ...configured])).sort((a, b) => a.localeCompare(b));
+}
+
+function saveProjectRule(projectId: string, rule: Required<ProjectRule>): void {
+	const settingsPath = path.join(getAgentDir(), "settings.json");
+	const settings = readJsonFile(settingsPath);
+	const currentFilter = settings.contextFileFilter ?? {};
+	settings.contextFileFilter = {
+		...currentFilter,
+		enabled: currentFilter.enabled ?? true,
+		projects: {
+			...(currentFilter.projects ?? {}),
+			[projectId]: rule,
+		},
+	};
+	writeJsonFile(settingsPath, settings);
+}
+
+function formatConfigSummary(projectId: string, rule: Required<ProjectRule>): string {
+	return [
+		`Updated context filter for ${projectId}.`,
+		"",
+		`State: ${rule.enabled ? "enabled" : "disabled"}`,
+		`Scope: ${rule.scope}`,
+		"Ignored files:",
+		...formatList(rule.ignore, "- (none)"),
+	].join("\n");
+}
+
 export default function contextExtension(pi: ExtensionAPI) {
 	let state: ActiveRuleState | undefined;
 	let lastLoadedPaths: string[] = [];
@@ -323,11 +395,81 @@ export default function contextExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand(commandName, {
-		description: "Show current context-file filter status",
+		description: "Show or configure current context-file filter status",
 		handler: async (args, ctx) => {
 			const trimmed = args.trim();
+
+			if (trimmed === "project config") {
+				if (!ctx.hasUI) {
+					ctx.ui.notify("/context project config requires interactive UI.", "error");
+					return;
+				}
+
+				const currentState = refreshState(ctx.cwd);
+				if (!currentState.project.id) {
+					ctx.ui.notify(`Cannot configure context filter: ${currentState.project.error ?? "project ID unavailable"}.`, "error");
+					return;
+				}
+
+				const existingRule = currentState.rule;
+				const configuredIgnore = existingRule?.ignore ?? [];
+				const candidates = discoverContextCandidates(ctx.cwd);
+				const options = mergeCandidateAndConfiguredPaths(candidates, configuredIgnore);
+
+				if (!options.length) {
+					ctx.ui.notify("No AGENTS.md, CLAUDE.md, or CODEX.md files found under the current directory, and no ignored files are currently configured.", "warning");
+					return;
+				}
+
+				const answers = await askQuestionnaire<ContextConfigAnswer>(ctx, {
+					title: `Configure context filter for ${currentState.project.id}`,
+					questions: [
+						{
+							id: "enabled",
+							label: "State",
+							question: "Should context filtering be enabled for this project?",
+							multiple: false,
+							options: [
+								{ label: "Enabled", value: "enabled", description: "Apply this project's ignore list before each agent run." },
+								{ label: "Disabled", value: "disabled", description: "Keep this project's rule but do not filter context files." },
+							],
+						},
+						{
+							id: "ignore",
+							label: "Files",
+							question: "Which context files should be ignored?",
+							multiple: true,
+							options: options.map((relativePath) => ({
+								label: relativePath,
+								value: relativePath,
+								selected: configuredIgnore.includes(relativePath),
+								description: candidates.includes(relativePath) ? undefined : "Configured but not found under the current directory.",
+							})),
+						},
+					],
+				});
+
+				if (!answers.length) {
+					ctx.ui.notify("Context project config cancelled.", "info");
+					return;
+				}
+
+				const enabledAnswer = answers.find((answer) => answer.id === "enabled")?.selected[0];
+				const ignoreAnswers = answers.find((answer) => answer.id === "ignore")?.selected ?? [];
+				const rule: Required<ProjectRule> = {
+					enabled: enabledAnswer !== "disabled",
+					scope: "paths",
+					ignore: ignoreAnswers.filter((value): value is string => typeof value === "string").sort((a, b) => a.localeCompare(b)),
+				};
+
+				saveProjectRule(currentState.project.id, rule);
+				refreshState(ctx.cwd);
+				ctx.ui.notify(formatConfigSummary(currentState.project.id, rule), "info");
+				return;
+			}
+
 			if (trimmed && trimmed !== "status") {
-				ctx.ui.notify("Usage: /context\n\nConfiguration subcommands are planned but not implemented yet.", "info");
+				ctx.ui.notify("Usage: /context\n/context project config", "info");
 				return;
 			}
 

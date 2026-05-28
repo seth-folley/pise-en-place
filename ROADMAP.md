@@ -43,7 +43,7 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 ### Context file filtering
 
-- **Context status and filtering base** — Adds `/context` status reporting and per-Git-project context-file filtering from Pi settings, while always preserving global `~/.pi/agent/AGENTS.md`. Current implementation filters by removing matching `<project_instructions>` blocks from the assembled system prompt on each agent run because normal Pi extensions cannot mutate the loaded context-file list.
+- **Context status and filtering base** — Adds `/context` status reporting, `/context project config` questionnaire setup, and per-Git-project context-file filtering from Pi settings, while always preserving global `~/.pi/agent/AGENTS.md`. Current implementation filters by removing matching `<project_instructions>` blocks from the assembled system prompt on each agent run because normal Pi extensions cannot mutate the loaded context-file list.
 
 ## Todos
 
