@@ -6,11 +6,11 @@
  *
  * Important implementation note: normal Pi extensions can inspect loaded context
  * files during before_agent_start, but they cannot currently mutate Pi's loaded
- * context-file list. This extension therefore removes matching
- * <project_instructions> blocks from the assembled system prompt on each agent
- * run. Pi still discovers the files normally, and the startup header may still
- * list them. A true load-time filter would require an SDK wrapper using
- * agentsFilesOverride or a Pi core context-file filter hook.
+ * context-file list or loaded skill list. This extension therefore removes
+ * matching <project_instructions> and <skill> blocks from the assembled system
+ * prompt on each agent run. Pi still discovers the resources normally, and the
+ * startup header may still list them. A true load-time filter would require an
+ * SDK wrapper using agentsFilesOverride or a Pi core context/skill filter hook.
  *
  * Configuration lives in Pi settings under contextFileFilter. Rules are keyed by
  * normalized Git project ID, e.g. github.com:owner/repo.
@@ -25,13 +25,23 @@ import path from "node:path";
 import { askQuestionnaire } from "../../src/shared/interactive-questions.ts";
 
 const commandName = "context";
+const noContextFilesValue = "__context-filter-none-files__";
+const noSkillsValue = "__context-filter-none-skills__";
 
 type ContextFilterScope = "project" | "paths";
+type SkillFilterScope = "names";
+
+type SkillRule = {
+	enabled?: boolean;
+	scope?: SkillFilterScope;
+	ignore?: string[];
+};
 
 type ProjectRule = {
 	enabled?: boolean;
 	scope?: ContextFilterScope;
 	ignore?: string[];
+	skills?: SkillRule;
 };
 
 type ContextFileFilterConfig = {
@@ -63,6 +73,10 @@ type ActiveRuleState = {
 type ContextFile = {
 	path: string;
 	content: string;
+};
+
+type SkillInfo = {
+	name: string;
 };
 
 function expandHome(value: string): string {
@@ -156,7 +170,10 @@ function resolveState(cwd: string): ActiveRuleState {
 	const rule = config.projects?.[project.id];
 	if (!rule) return { project, config, active: false, reason: `no rule configured for ${project.id}` };
 	if (rule.enabled === false) return { project, config, rule, active: false, reason: "project rule is disabled" };
-	if (!rule.ignore?.length) return { project, config, rule, active: false, reason: "project rule has no ignore entries" };
+
+	const hasContextIgnores = (rule.ignore?.length ?? 0) > 0;
+	const hasSkillIgnores = rule.skills?.enabled !== false && (rule.skills?.ignore?.length ?? 0) > 0;
+	if (!hasContextIgnores && !hasSkillIgnores) return { project, config, rule, active: false, reason: "project rule has no ignore entries" };
 
 	return { project, config, rule, active: true };
 }
@@ -252,8 +269,32 @@ function removeContextBlocks(systemPrompt: string, ignored: ContextFile[]): stri
 	);
 }
 
+function shouldIgnoreSkill(skill: SkillInfo, state: ActiveRuleState): boolean {
+	if (!state.active || state.rule?.skills?.enabled === false) return false;
+	const skillRule = state.rule?.skills;
+	if (!skillRule?.ignore?.length) return false;
+	return (skillRule.scope ?? "names") === "names" && skillRule.ignore.includes(skill.name);
+}
+
+function removeSkillBlocks(systemPrompt: string, ignored: SkillInfo[]): string {
+	let nextPrompt = systemPrompt;
+	for (const skill of ignored) {
+		const skillBlockPattern = new RegExp(`\\n?\\s*<skill>\\s*\\n\\s*<name>${escapeRegExp(skill.name)}</name>[\\s\\S]*?\\n\\s*</skill>`, "g");
+		nextPrompt = nextPrompt.replace(skillBlockPattern, "");
+	}
+
+	return nextPrompt.replace(
+		/\n\nThe following skills provide specialized instructions for specific tasks\.\nUse the read tool to load a skill's file when the task matches its description\.\nWhen a skill file references a relative path, resolve it against the skill directory \(parent of SKILL\.md \/ dirname of the path\) and use that absolute path in tool commands\.\n\n<available_skills>\s*<\/available_skills>\n/,
+		"\n"
+	);
+}
+
 function extractContextPaths(systemPrompt: string): string[] {
 	return [...systemPrompt.matchAll(/<project_instructions path="([^"]+)">/g)].map((match) => match[1]);
+}
+
+function extractSkillNames(systemPrompt: string): string[] {
+	return Array.from(new Set([...systemPrompt.matchAll(/<skill>\s*<name>([^<]+)<\/name>/g)].map((match) => match[1]))).sort((a, b) => a.localeCompare(b));
 }
 
 function formatList(items: string[], emptyText: string): string[] {
@@ -261,7 +302,7 @@ function formatList(items: string[], emptyText: string): string[] {
 	return items.map((item) => `- ${item}`);
 }
 
-function formatStatus(state: ActiveRuleState, cwd: string, lastLoadedPaths: string[], ignoredThisSession: string[]): string {
+function formatStatus(state: ActiveRuleState, cwd: string, lastLoadedPaths: string[], ignoredThisSession: string[], ignoredSkillsThisSession: string[]): string {
 	const lines = ["Context filter", ""];
 	lines.push(`Project: ${state.project.id ?? "unknown"}`);
 	if (state.project.gitRoot) lines.push(`Git root: ${state.project.gitRoot}`);
@@ -270,9 +311,18 @@ function formatStatus(state: ActiveRuleState, cwd: string, lastLoadedPaths: stri
 	if (state.reason) lines.push(`Reason: ${state.reason}`);
 
 	if (state.rule) {
+		lines.push("Context files:");
 		lines.push(`Scope: ${state.rule.scope ?? "project"}`);
 		lines.push("Ignore rules:");
 		lines.push(...formatList(state.rule.ignore ?? [], "- (none)"));
+
+		if (state.rule.skills) {
+			lines.push("", "Skills:");
+			lines.push(`State: ${state.rule.skills.enabled === false ? "disabled" : "enabled"}`);
+			lines.push(`Scope: ${state.rule.skills.scope ?? "names"}`);
+			lines.push("Ignore rules:");
+			lines.push(...formatList(state.rule.skills.ignore ?? [], "- (none)"));
+		}
 	}
 
 	const loadedPaths = lastLoadedPaths;
@@ -286,8 +336,10 @@ function formatStatus(state: ActiveRuleState, cwd: string, lastLoadedPaths: stri
 		lines.push("", "Currently loaded context files: not evaluated yet");
 	}
 
-	lines.push("", "Ignored this session:");
+	lines.push("", "Ignored context files this session:");
 	lines.push(...formatList(ignoredThisSession, "- (none yet)"));
+	lines.push("", "Ignored skills this session:");
+	lines.push(...formatList(ignoredSkillsThisSession, "- (none yet)"));
 
 	return lines.join("\n");
 }
@@ -329,7 +381,7 @@ function mergeCandidateAndConfiguredPaths(candidates: string[], configured: stri
 	return Array.from(new Set([...candidates, ...configured])).sort((a, b) => a.localeCompare(b));
 }
 
-function saveProjectRule(projectId: string, rule: Required<ProjectRule>): void {
+function saveProjectRule(projectId: string, rule: ProjectRule): void {
 	const settingsPath = path.join(getAgentDir(), "settings.json");
 	const settings = readJsonFile(settingsPath);
 	const currentFilter = settings.contextFileFilter ?? {};
@@ -344,14 +396,20 @@ function saveProjectRule(projectId: string, rule: Required<ProjectRule>): void {
 	writeJsonFile(settingsPath, settings);
 }
 
-function formatConfigSummary(projectId: string, rule: Required<ProjectRule>): string {
+function formatConfigSummary(projectId: string, rule: ProjectRule): string {
 	return [
 		`Updated context filter for ${projectId}.`,
 		"",
-		`State: ${rule.enabled ? "enabled" : "disabled"}`,
-		`Scope: ${rule.scope}`,
-		"Ignored files:",
-		...formatList(rule.ignore, "- (none)"),
+		`State: ${rule.enabled !== false ? "enabled" : "disabled"}`,
+		"Context files:",
+		`Scope: ${rule.scope ?? "paths"}`,
+		"Ignore rules:",
+		...formatList(rule.ignore ?? [], "- (none)"),
+		"",
+		"Skills:",
+		`Scope: ${rule.skills?.scope ?? "names"}`,
+		"Ignore rules:",
+		...formatList(rule.skills?.ignore ?? [], "- (none)"),
 	].join("\n");
 }
 
@@ -359,7 +417,9 @@ export default function contextExtension(pi: ExtensionAPI) {
 	let state: ActiveRuleState | undefined;
 	let lastLoadedPaths: string[] = [];
 	let ignoredThisSession: string[] = [];
+	let ignoredSkillsThisSession: string[] = [];
 	const notifiedIgnoredSets = new Set<string>();
+	const notifiedIgnoredSkillSets = new Set<string>();
 
 	function refreshState(cwd: string): ActiveRuleState {
 		state = resolveState(cwd);
@@ -370,28 +430,50 @@ export default function contextExtension(pi: ExtensionAPI) {
 		refreshState(ctx.cwd);
 		lastLoadedPaths = [];
 		ignoredThisSession = [];
+		ignoredSkillsThisSession = [];
 		notifiedIgnoredSets.clear();
+		notifiedIgnoredSkillSets.clear();
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		const currentState = state ?? refreshState(ctx.cwd);
 		const contextFiles = event.systemPromptOptions.contextFiles ?? [];
+		const skills = event.systemPromptOptions.skills ?? [];
 		lastLoadedPaths = contextFiles.map((file) => file.path);
 
 		const ignored = contextFiles.filter((file) => shouldIgnoreContextFile(file, ctx.cwd, currentState));
-		if (!ignored.length) return;
+		const ignoredSkills = skills.filter((skill) => shouldIgnoreSkill(skill, currentState));
+		if (!ignored.length && !ignoredSkills.length) return;
 
-		ignoredThisSession = Array.from(new Set([...ignoredThisSession, ...ignored.map((file) => file.path)])).sort();
+		let systemPrompt = event.systemPrompt;
 
-		if (ctx.hasUI) {
-			const key = ignored.map((file) => file.path).sort().join("\n");
-			if (!notifiedIgnoredSets.has(key)) {
-				notifiedIgnoredSets.add(key);
-				ctx.ui.notify(["Ignored context files:", ...ignored.map((file) => `- ${file.path}`)].join("\n"), "info");
+		if (ignored.length) {
+			ignoredThisSession = Array.from(new Set([...ignoredThisSession, ...ignored.map((file) => file.path)])).sort();
+			systemPrompt = removeContextBlocks(systemPrompt, ignored);
+
+			if (ctx.hasUI) {
+				const key = ignored.map((file) => file.path).sort().join("\n");
+				if (!notifiedIgnoredSets.has(key)) {
+					notifiedIgnoredSets.add(key);
+					ctx.ui.notify(["Ignored context files:", ...ignored.map((file) => `- ${file.path}`)].join("\n"), "info");
+				}
 			}
 		}
 
-		return { systemPrompt: removeContextBlocks(event.systemPrompt, ignored) };
+		if (ignoredSkills.length) {
+			ignoredSkillsThisSession = Array.from(new Set([...ignoredSkillsThisSession, ...ignoredSkills.map((skill) => skill.name)])).sort();
+			systemPrompt = removeSkillBlocks(systemPrompt, ignoredSkills);
+
+			if (ctx.hasUI) {
+				const key = ignoredSkills.map((skill) => skill.name).sort().join("\n");
+				if (!notifiedIgnoredSkillSets.has(key)) {
+					notifiedIgnoredSkillSets.add(key);
+					ctx.ui.notify(["Ignored skills:", ...ignoredSkills.map((skill) => `- ${skill.name}`)].join("\n"), "info");
+				}
+			}
+		}
+
+		return { systemPrompt };
 	});
 
 	pi.registerCommand(commandName, {
@@ -413,13 +495,11 @@ export default function contextExtension(pi: ExtensionAPI) {
 
 				const existingRule = currentState.rule;
 				const configuredIgnore = existingRule?.ignore ?? [];
+				const configuredSkillIgnore = existingRule?.skills?.ignore ?? [];
 				const candidates = discoverContextCandidates(ctx.cwd);
 				const options = mergeCandidateAndConfiguredPaths(candidates, configuredIgnore);
-
-				if (!options.length) {
-					ctx.ui.notify("No AGENTS.md, CLAUDE.md, or CODEX.md files found under the current directory, and no ignored files are currently configured.", "warning");
-					return;
-				}
+				const skillCandidates = extractSkillNames(ctx.getSystemPrompt());
+				const skillOptions = mergeCandidateAndConfiguredPaths(skillCandidates, configuredSkillIgnore);
 
 				const answers = await askQuestionnaire<ContextConfigAnswer>(ctx, {
 					title: `Configure context filter for ${currentState.project.id}`,
@@ -439,12 +519,30 @@ export default function contextExtension(pi: ExtensionAPI) {
 							label: "Files",
 							question: "Which context files should be ignored?",
 							multiple: true,
-							options: options.map((relativePath) => ({
-								label: relativePath,
-								value: relativePath,
-								selected: configuredIgnore.includes(relativePath),
-								description: candidates.includes(relativePath) ? undefined : "Configured but not found under the current directory.",
-							})),
+							options: [
+								{ label: "(none)", value: noContextFilesValue, selected: configuredIgnore.length === 0 },
+								...options.map((relativePath) => ({
+									label: relativePath,
+									value: relativePath,
+									selected: configuredIgnore.includes(relativePath),
+									description: candidates.includes(relativePath) ? undefined : "Configured but not found under the current directory.",
+								})),
+							],
+						},
+						{
+							id: "skills",
+							label: "Skills",
+							question: "Which skills should be hidden from the model for this project?",
+							multiple: true,
+							options: [
+								{ label: "(none)", value: noSkillsValue, selected: configuredSkillIgnore.length === 0 },
+								...skillOptions.map((skillName) => ({
+									label: skillName,
+									value: skillName,
+									selected: configuredSkillIgnore.includes(skillName),
+									description: skillCandidates.includes(skillName) ? undefined : "Configured but not currently loaded.",
+								})),
+							],
 						},
 					],
 				});
@@ -456,10 +554,20 @@ export default function contextExtension(pi: ExtensionAPI) {
 
 				const enabledAnswer = answers.find((answer) => answer.id === "enabled")?.selected[0];
 				const ignoreAnswers = answers.find((answer) => answer.id === "ignore")?.selected ?? [];
-				const rule: Required<ProjectRule> = {
+				const skillAnswers = answers.find((answer) => answer.id === "skills")?.selected ?? [];
+				const rule: ProjectRule = {
 					enabled: enabledAnswer !== "disabled",
 					scope: "paths",
-					ignore: ignoreAnswers.filter((value): value is string => typeof value === "string").sort((a, b) => a.localeCompare(b)),
+					ignore: ignoreAnswers
+						.filter((value): value is string => typeof value === "string" && value !== noContextFilesValue)
+						.sort((a, b) => a.localeCompare(b)),
+					skills: {
+						enabled: true,
+						scope: "names",
+						ignore: skillAnswers
+							.filter((value): value is string => typeof value === "string" && value !== noSkillsValue)
+							.sort((a, b) => a.localeCompare(b)),
+					},
 				};
 
 				saveProjectRule(currentState.project.id, rule);
@@ -481,7 +589,7 @@ export default function contextExtension(pi: ExtensionAPI) {
 			const currentState = refreshState(ctx.cwd);
 			const promptPaths = extractContextPaths(ctx.getSystemPrompt());
 			const visibleLoadedPaths = lastLoadedPaths.length ? lastLoadedPaths : promptPaths;
-			ctx.ui.notify(formatStatus(currentState, ctx.cwd, visibleLoadedPaths, ignoredThisSession), "info");
+			ctx.ui.notify(formatStatus(currentState, ctx.cwd, visibleLoadedPaths, ignoredThisSession, ignoredSkillsThisSession), "info");
 		},
 	});
 }

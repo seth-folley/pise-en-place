@@ -43,7 +43,7 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 ### Context file filtering
 
-- **Context status and filtering base** — Adds `/context` status reporting, `/context project config` questionnaire setup, and per-Git-project context-file filtering from Pi settings, while always preserving global `~/.pi/agent/AGENTS.md`. Current implementation filters by removing matching `<project_instructions>` blocks from the assembled system prompt on each agent run because normal Pi extensions cannot mutate the loaded context-file list.
+- **Context status and filtering base** — Adds `/context` status reporting, `/context project config` questionnaire setup, per-Git-project context-file filtering, and skill-name filtering from Pi settings, while always preserving global `~/.pi/agent/AGENTS.md`. Current implementation filters by removing matching `<project_instructions>` and `<skill>` blocks from the assembled system prompt on each agent run because normal Pi extensions cannot mutate the loaded context-file or skill list.
 
 ## Todos
 
@@ -86,6 +86,7 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 - **Runtime context reinjection** — Revisit commands for including ignored context files mid-session, such as `/context include`, `/context ignore`, or `/context include-once`.
 - **Load-time context filtering** — Revisit an SDK wrapper or Pi core hook that filters `AGENTS.md`/`CLAUDE.md` before Pi records them as loaded, avoiding prompt-string surgery and startup-header mismatch.
+- **Skill path filtering** — Add `skills.scope: "paths"` using each skill's `<location>`/`filePath`, in addition to the current `skills.scope: "names"` support.
 
 ### Safety: dangerous operation confirmations
 
