@@ -46,6 +46,7 @@
       "./extensions/ui/dracula-status-line.ts",
       "./extensions/ui/response-time.ts",
       "./extensions/ui/interactive-agent-questions.ts",
+      "./extensions/productivity/context.ts",
       "./extensions/productivity/copy-session-id.ts",
       "./extensions/productivity/local-share.ts",
       "./extensions/productivity/roadmap-writer.ts",
