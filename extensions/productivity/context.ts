@@ -468,8 +468,13 @@ export default function contextExtension(pi: ExtensionAPI) {
 				return;
 			}
 
+			if (trimmed === "system-prompt") {
+				ctx.ui.notify(ctx.getSystemPrompt(), "info");
+				return;
+			}
+
 			if (trimmed && trimmed !== "status") {
-				ctx.ui.notify("Usage: /context\n/context project config", "info");
+				ctx.ui.notify("Usage: /context\n/context system-prompt\n/context project config", "info");
 				return;
 			}
 
