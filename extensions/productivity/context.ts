@@ -510,8 +510,8 @@ export default function contextExtension(pi: ExtensionAPI) {
 							question: "Should context filtering be enabled for this project?",
 							multiple: false,
 							options: [
-								{ label: "Enabled", value: "enabled", description: "Apply this project's ignore list before each agent run." },
-								{ label: "Disabled", value: "disabled", description: "Keep this project's rule but do not filter context files." },
+								{ label: "Enabled", value: "enabled", selected: existingRule?.enabled !== false, description: "Apply this project's ignore list before each agent run." },
+								{ label: "Disabled", value: "disabled", selected: existingRule?.enabled === false, description: "Keep this project's rule but do not filter context files." },
 							],
 						},
 						{

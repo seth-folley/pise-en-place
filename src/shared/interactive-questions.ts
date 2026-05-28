@@ -208,11 +208,14 @@ export async function askQuestionnaire<T>(
 
         questionnaire.questions.forEach((question) => {
             const selected = new Set<number>();
-            if (question.multiple) {
-                question.options.forEach((option, index) => {
-                    if (option.selected) selected.add(index);
-                });
-            }
+            question.options.forEach((option, index) => {
+                if (!option.selected) return;
+                if (question.multiple) {
+                    selected.add(index);
+                    return;
+                }
+                if (selected.size === 0) selected.add(index);
+            });
             selections.set(question.id, selected);
         });
 
