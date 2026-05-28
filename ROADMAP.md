@@ -37,6 +37,14 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 - **Interactive questioning component** — Extracts the tabbed question flow into a reusable component and exposes `ask_user` so agents can ask one or many guided interactive questions, including optional custom answers.
 
+### Session todo list
+
+- **Session todo widget and tool** — Adds a branch-aware session todo list shared by the user and agent, with a `todo` agent tool, `/todos` management command, and an above-editor TUI widget that hides when empty and can be toggled with `/todos`.
+
+### Context file filtering
+
+- **Context status and filtering base** — Adds `/context` status reporting and per-Git-project context-file filtering from Pi settings, while always preserving global `~/.pi/agent/AGENTS.md`.
+
 ## Todos
 
 ### Project documentation and upkeep
@@ -60,6 +68,12 @@ A lightweight place to track what has been added, what is next, and longer-term 
 ### TUI and process display
 
 - **Spawned Pi output pane** — Show output from newly spawned Pi instances in a smaller TUI window.
+- **Sidebar scratch chat** — Add an extension for a temporary sidebar chat with Pi while the main agent/process is running, intended for one-off questions and brief side conversations that do not enter the main agent context.
+
+### Session todo list
+
+- **Todo command naming cleanup** — Revisit whether the user-facing command should be `/todo` instead of `/todos`, and add compatibility aliases if helpful.
+- **Todo manual tests** — Add a checklist or smoke tests covering agent tool mutations, user command mutations, widget show/hide behavior, reload reconstruction, and session tree navigation.
 
 ## Ideas
 
@@ -83,6 +97,14 @@ A lightweight place to track what has been added, what is next, and longer-term 
 ### Status line and response feedback
 
 - **More status line themes** — Add additional status line styles beyond Dracula and minimal.
+
+### Session todo list
+
+- **Project-scoped todos** — Add optional project-level todos stored outside the session for tasks that should survive across Pi sessions.
+- **Hybrid pinned todos** — Support session todos plus durable pinned/project todos in one widget.
+- **Interactive todo panel** — Add a focused `/todos` panel or overlay with keyboard navigation for toggling, editing, deleting, and adding items.
+- **Todo visibility persistence** — Optionally remember widget visibility globally or in the session instead of resetting on reload.
+- **Todo rendering polish** — Replace dim notification output with a brighter custom-rendered message or panel for `/todos list` and help output.
 
 ### Skill updates and management
 

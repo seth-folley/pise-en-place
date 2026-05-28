@@ -48,7 +48,11 @@
       "./extensions/ui/interactive-agent-questions.ts",
       "./extensions/productivity/copy-session-id.ts",
       "./extensions/productivity/local-share.ts",
-      "./extensions/productivity/roadmap-writer.ts"
+      "./extensions/productivity/roadmap-writer.ts",
+      "./extensions/productivity/todos.ts"
+    ],
+    "themes": [
+      "./themes"
     ]
   },
   "peerDependencies": {
@@ -59,6 +63,7 @@
   },
   "files": [
     "extensions",
+    "themes",
     "src",
     "docs",
     "README.md",
