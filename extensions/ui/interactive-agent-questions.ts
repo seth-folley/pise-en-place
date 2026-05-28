@@ -15,7 +15,7 @@ const questionSchema = Type.Object({
     label: Type.Optional(Type.String({ description: "Short tab label; defaults to id" })),
     question: Type.String({ description: "The question to ask the user" }),
     options: Type.Array(optionSchema, { description: "Available answers for the user to choose from" }),
-    allowMultiple: Type.Optional(Type.Boolean({ description: "Allow selecting multiple answers for this question. Defaults to false." })),
+    allowMultiple: Type.Optional(Type.Boolean({ description: "Allow selecting multiple answers for this question. Defaults to true. Set false for single-select." })),
     allowOther: Type.Optional(Type.Boolean({ description: "Allow typing a custom answer if the listed options are not adequate. Defaults to false." })),
     otherLabel: Type.Optional(Type.String({ description: "Label for the custom-answer option. Defaults to 'Other / type your own answer'." })),
 });
@@ -24,7 +24,7 @@ const questionSchema = Type.Object({
 const askUserSchema = Type.Object({
     question: Type.Optional(Type.String({ description: "The question to ask the user. Use for one question." })),
     options: Type.Optional(Type.Array(optionSchema, { description: "Available answers for one question" })),
-    allowMultiple: Type.Optional(Type.Boolean({ description: "Allow selecting multiple answers for one question. Defaults to false." })),
+    allowMultiple: Type.Optional(Type.Boolean({ description: "Allow selecting multiple answers for one question. Defaults to true. Set false for single-select." })),
     allowOther: Type.Optional(Type.Boolean({ description: "Allow typing a custom answer for one question. Defaults to false." })),
     otherLabel: Type.Optional(Type.String({ description: "Label for the custom-answer option for one question." })),
     questions: Type.Optional(Type.Array(questionSchema, { description: "Ask several questions in one tabbed interaction. Prefer this over multiple ask_user calls when you need more than one answer." })),
@@ -67,7 +67,7 @@ export default function (pi: ExtensionAPI) {
             "Use ask_user when required information is ambiguous and the user can choose from a concise set of options.",
             "When asking more than one related question, use ask_user questions[] so the user can answer them in one tabbed interaction instead of making several ask_user calls.",
             "Do not use ask_user for purely open-ended questions; use allowOther only as a fallback when predefined options may not be adequate.",
-            "When using ask_user, provide clear option labels, set allowMultiple only when multiple answers are valid, and set allowOther when the listed options may not be adequate.",
+            "When using ask_user, provide clear option labels, set allowMultiple false only when exactly one answer is valid, and set allowOther when the listed options may not be adequate.",
         ],
         parameters: askUserSchema,
 
@@ -104,7 +104,7 @@ export default function (pi: ExtensionAPI) {
                         id: question.id,
                         label: question.label,
                         question: question.question,
-                        multiple: question.allowMultiple === true,
+                        multiple: question.allowMultiple !== false,
                         allowOther: question.allowOther === true,
                         otherLabel: question.otherLabel,
                         options: question.options.map((option) => ({
@@ -137,7 +137,7 @@ export default function (pi: ExtensionAPI) {
                 };
             }
 
-            const allowMultiple = params.allowMultiple === true;
+            const allowMultiple = params.allowMultiple !== false;
             const allowOther = params.allowOther === true;
             const normalizedOptions = ((params.options ?? []) as AskUserOption[]).map((option) => ({
                 ...option,
@@ -237,7 +237,7 @@ export default function (pi: ExtensionAPI) {
             }
 
             const optionCount = Array.isArray(args.options) ? args.options.length : 0;
-            const mode = args.allowMultiple ? "multi-select" : "single-select";
+            const mode = args.allowMultiple === false ? "single-select" : "multi-select";
             return new Text(
                 theme.fg("toolTitle", theme.bold("ask_user ")) +
                 theme.fg("muted", String(args.question ?? "")) +
