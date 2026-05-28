@@ -16,7 +16,7 @@ const commandName = "roadmap";
 const roadmapFile = "ROADMAP.md";
 const timeoutMs = 10 * 60 * 1000;
 const extensionDir = path.dirname(fileURLToPath(import.meta.url));
-const usageLedgerExtension = path.join(extensionDir, "usage-ledger.ts");
+const usageLedgerExtension = path.resolve(extensionDir, "..", "usage", "index.ts");
 
 function buildPrompt(request: string): string {
     return `You are a focused roadmap-editing agent running in a separate Pi process.

@@ -104,6 +104,10 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 - **More status line themes** — Add additional status line styles beyond Dracula and minimal.
 
+### Agent orchestration
+
+- **Researcher agent** — Add a focused agent that investigates a specific area of code or process and returns a concise summary for the calling agent and/or human.
+
 ### Session todo list
 
 - **Project-scoped todos** — Add optional project-level todos stored outside the session for tasks that should survive across Pi sessions.
