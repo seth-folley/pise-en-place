@@ -237,7 +237,6 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 		command.range = "lifetime";
 		if (positionals.length > 1) command.project = positionals.slice(1).join(" ");
 		if (command.groupByProject) return { ...command, error: "Missing value for --project" };
-		if (!command.list && !command.project) return { ...command, error: "Usage: /usage project --list or /usage project <project>" };
 		return command;
 	}
 
@@ -456,6 +455,7 @@ function formatHelp(json: boolean): string {
 			{ command: "/usage week", description: "Show current week summary" },
 			{ command: "/usage month", description: "Show current month summary" },
 			{ command: "/usage lifetime", description: "Show lifetime summary" },
+			{ command: "/usage project", description: "Select a recorded project and show lifetime usage" },
 			{ command: "/usage project --list", description: "List recorded projects" },
 			{ command: "/usage project <project>", description: "Show lifetime usage for a project" },
 			{ command: "/usage model --list", description: "List recorded models" },
@@ -857,6 +857,27 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 		const models = listModels(records);
 		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, models, skippedLines }, null, 2) : formatList("model", models, skippedLines), parsed.json);
 		return;
+	}
+
+	if (parsed.mode === "project" && !parsed.project) {
+		const projects = listProjects(records);
+		if (!projects.length) {
+			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error: "No usage records found.", projects, skippedLines }, null, 2) : "No usage records found.", parsed.json);
+			return;
+		}
+
+		if (!ctx.hasUI) {
+			const error = "Project selection requires an interactive UI. Use /usage project --list or /usage project <project> instead.";
+			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error, projects, skippedLines }, null, 2) : error, parsed.json);
+			return;
+		}
+
+		const selected = await ctx.ui.select("Select project usage to view:", projects);
+		if (!selected) {
+			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, cancelled: true, projects, skippedLines }, null, 2) : "Project selection cancelled.", parsed.json);
+			return;
+		}
+		parsed.project = selected;
 	}
 
 	if (parsed.project && !records.some((record) => matchesProject(record, parsed.project!))) {
