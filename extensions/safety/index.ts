@@ -43,6 +43,20 @@ const protectedSystemRoots = [
 
 const piHome = path.resolve(homedir(), ".pi");
 
+const allowedTempScratchRoots = [
+    "/tmp",
+    "/private/tmp",
+];
+
+const tempScopedFileHazards = [
+    "file deletion",
+    "file truncation",
+    "find delete",
+    "permission/ownership change",
+];
+
+const fileOperationCommands = new Set(["rm", "rmdir", "unlink", "shred", "truncate", "chmod", "chown", "chgrp"]);
+
 const hazards: Hazard[] = [
     { label: "privileged execution (sudo)", pattern: /(^|[;&|()\s])sudo(\s|$)/i },
     { label: "switch user/session", pattern: /(^|[;&|()\s])su(\s|$)/i },
@@ -129,6 +143,128 @@ function commandHasProtectedSystemWrite(command: string): boolean {
     });
 }
 
+function isAllowedTempScratchPath(candidate: string): boolean {
+    const normalized = normalizeCandidatePath(candidate);
+    if (!normalized) return false;
+
+    return allowedTempScratchRoots.some((root) => isPathInRoot(normalized, root));
+}
+
+function tokenizeShellLike(command: string): string[] {
+    return command.match(/&&|\|\||[;&|()]|"(?:\\.|[^"])*"|'[^']*'|[^\s;&|()]+/g) ?? [];
+}
+
+function isShellSeparator(token: string): boolean {
+    return token === ";" || token === "&&" || token === "||" || token === "|" || token === "(" || token === ")";
+}
+
+function cleanToken(token: string): string {
+    return stripShellQuotes(token.trim());
+}
+
+function commandName(token: string): string {
+    return path.basename(cleanToken(token));
+}
+
+function isPathLikeToken(token: string): boolean {
+    const cleaned = cleanToken(token);
+    return cleaned.startsWith("/") || cleaned.startsWith("~/");
+}
+
+function allPathMentionsAreAllowedTemp(tokens: string[]): boolean {
+    return tokens.every((token) => !isPathLikeToken(token) || isAllowedTempScratchPath(cleanToken(token)));
+}
+
+function isOptionToken(token: string): boolean {
+    return cleanToken(token).startsWith("-");
+}
+
+function fileOperandsForCommand(command: string, args: string[]): string[] | undefined {
+    const operands: string[] = [];
+    let skippedSubject = false;
+
+    for (let index = 0; index < args.length; index += 1) {
+        const arg = args[index];
+        if (isShellSeparator(arg)) break;
+
+        const cleaned = cleanToken(arg);
+        if (!cleaned) continue;
+
+        if (isOptionToken(cleaned)) {
+            if (command === "truncate" && (cleaned === "-s" || cleaned === "--size")) {
+                index += 1;
+            }
+            continue;
+        }
+
+        if ((command === "chmod" || command === "chown" || command === "chgrp") && !skippedSubject) {
+            skippedSubject = true;
+            continue;
+        }
+
+        operands.push(cleaned);
+    }
+
+    return operands;
+}
+
+function segmentIsTempScopedFindDelete(segment: string[]): boolean {
+    const findIndex = segment.findIndex((token) => commandName(token) === "find");
+    if (findIndex < 0 || !segment.includes("-delete")) return false;
+
+    const firstSearchPath = segment.slice(findIndex + 1).find((token) => !isOptionToken(token));
+    return firstSearchPath !== undefined && isAllowedTempScratchPath(firstSearchPath);
+}
+
+function segmentIsTempScopedFileOperation(segment: string[]): boolean {
+    if (segmentIsTempScopedFindDelete(segment)) return true;
+    if (segment.some((token) => commandName(token) === "xargs")) return false;
+
+    const commandIndex = segment.findIndex((token) => fileOperationCommands.has(commandName(token)));
+    if (commandIndex < 0) return false;
+
+    const command = commandName(segment[commandIndex]);
+    const operands = fileOperandsForCommand(command, segment.slice(commandIndex + 1));
+    return operands !== undefined && operands.length > 0 && operands.every((operand) => isAllowedTempScratchPath(operand));
+}
+
+function segmentHasTempScopedCandidate(segment: string[]): boolean {
+    return segment.some((part) => fileOperationCommands.has(commandName(part)) || commandName(part) === "find");
+}
+
+function isTempScopedFileOperation(command: string, matches: string[]): boolean {
+    if (!matches.every((match) => tempScopedFileHazards.includes(match))) return false;
+    if (/[`]|\$\(/.test(command)) return false;
+
+    const tokens = tokenizeShellLike(command);
+    if (tokens.length === 0 || !allPathMentionsAreAllowedTemp(tokens)) return false;
+
+    let sawTempScopedOperation = false;
+    let segment: string[] = [];
+
+    for (const token of tokens) {
+        if (!isShellSeparator(token)) {
+            segment.push(token);
+            continue;
+        }
+
+        if (segment.length > 0 && segmentHasTempScopedCandidate(segment)) {
+            const safe = segmentIsTempScopedFileOperation(segment);
+            if (!safe) return false;
+            sawTempScopedOperation = true;
+        }
+        segment = [];
+    }
+
+    if (segment.length > 0 && segmentHasTempScopedCandidate(segment)) {
+        const safe = segmentIsTempScopedFileOperation(segment);
+        if (!safe) return false;
+        sawTempScopedOperation = true;
+    }
+
+    return sawTempScopedOperation;
+}
+
 function detectHazards(command: string): string[] {
     const matches: string[] = [];
 
@@ -140,6 +276,10 @@ function detectHazards(command: string): string[] {
 
     if (commandHasProtectedSystemWrite(command)) {
         addMatch(matches, "writing system files outside ~/.pi");
+    }
+
+    if (matches.length > 0 && isTempScopedFileOperation(command, matches)) {
+        return [];
     }
 
     return matches;
