@@ -37,6 +37,7 @@ type ProjectInfo = {
 	gitRemote: string | null;
 	gitRoot: string | null;
 	gitCommonDir: string | null;
+	gitBranch?: string | null;
 };
 
 type UsageLedgerRecord = {
@@ -77,12 +78,14 @@ type ParsedUsageCommand = {
 	project?: string;
 	groupByProject?: boolean;
 	model?: string;
+	branch?: string;
+	selectBranch?: boolean;
 	error?: string;
 };
 
 type UsageSummary = {
 	range: UsageRange;
-	filter?: { project?: string; model?: string };
+	filter?: { project?: string; model?: string; branch?: string };
 	calls: number;
 	input: number;
 	output: number;
@@ -222,6 +225,17 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 			continue;
 		}
 
+		if (token === "--branch") {
+			const value = tokens[i + 1];
+			if (!value || value.startsWith("--")) {
+				command.selectBranch = true;
+			} else {
+				command.branch = value;
+				i += 1;
+			}
+			continue;
+		}
+
 		if (token.startsWith("--")) return { ...command, error: `Unknown option: ${token}` };
 		positionals.push(token);
 	}
@@ -357,22 +371,31 @@ function matchesModel(record: UsageLedgerRecord, model: string): boolean {
 	return getModelLabels(record).includes(model);
 }
 
+function matchesBranch(record: UsageLedgerRecord, branch: string): boolean {
+	return record.project.gitBranch === branch || branchLabel(record.project.gitBranch) === branch;
+}
+
+function filterRecords(records: UsageLedgerRecord[], options: { range: UsageRange; project?: string; model?: string; branch?: string }): UsageLedgerRecord[] {
+	return records.filter((record) => {
+		if (!inRange(record, options.range)) return false;
+		if (options.project && !matchesProject(record, options.project)) return false;
+		if (options.model && !matchesModel(record, options.model)) return false;
+		if (options.branch && !matchesBranch(record, options.branch)) return false;
+		return true;
+	});
+}
+
 // Summaries are derived from raw records on demand. Token-only records count
 // toward tokens/calls but intentionally do not add to totalCost.
 function summarizeRecords(
 	records: UsageLedgerRecord[],
-	options: { range: UsageRange; project?: string; model?: string; skippedLines?: number },
+	options: { range: UsageRange; project?: string; model?: string; branch?: string; skippedLines?: number },
 ): UsageSummary {
-	const filtered = records.filter((record) => {
-		if (!inRange(record, options.range)) return false;
-		if (options.project && !matchesProject(record, options.project)) return false;
-		if (options.model && !matchesModel(record, options.model)) return false;
-		return true;
-	});
+	const filtered = filterRecords(records, options);
 
 	const summary: UsageSummary = {
 		range: options.range,
-		filter: { project: options.project, model: options.model },
+		filter: { project: options.project, model: options.model, branch: options.branch },
 		calls: filtered.length,
 		input: 0,
 		output: 0,
@@ -433,6 +456,7 @@ function titleForRange(range: UsageRange): string {
 function formatSummary(summary: UsageSummary): string {
 	const titleParts = [`Usage — ${titleForRange(summary.range)}`];
 	if (summary.filter?.project) titleParts.push(`project: ${summary.filter.project}`);
+	if (summary.filter?.branch) titleParts.push(`branch: ${summary.filter.branch}`);
 	if (summary.filter?.model) titleParts.push(`model: ${summary.filter.model}`);
 
 	const lines = [
@@ -443,6 +467,66 @@ function formatSummary(summary: UsageSummary): string {
 	];
 
 	if (summary.skippedLines) lines.push(`Skipped corrupt ledger lines: ${summary.skippedLines}`);
+	return lines.join("\n");
+}
+
+function branchLabel(branch: string | null | undefined): string {
+	return branch || "untracked";
+}
+
+function groupProjectRecordsByBranch(records: UsageLedgerRecord[], project: string): Array<{ branch: string | null; label: string; summary: UsageSummary }> {
+	const projectRecords = filterRecords(records, { range: "lifetime", project });
+	const branches = new Map<string, string | null>();
+	for (const record of projectRecords) {
+		const branch = record.project.gitBranch ?? null;
+		branches.set(branch ?? "", branch);
+	}
+
+	return Array.from(branches.values())
+		.map((branch) => {
+			const branchRecords = projectRecords.filter((record) => (record.project.gitBranch ?? null) === branch);
+			return {
+				branch,
+				label: branchLabel(branch),
+				summary: summarizeRecords(branchRecords, { range: "lifetime" }),
+			};
+		})
+		.sort((a, b) => b.summary.totalTokens - a.summary.totalTokens || a.label.localeCompare(b.label));
+}
+
+function buildProjectUsageReport(records: UsageLedgerRecord[], options: { project: string; skippedLines: number }) {
+	const overview = summarizeRecords(records, { range: "lifetime", project: options.project, skippedLines: options.skippedLines });
+	return {
+		project: options.project,
+		range: "lifetime" as UsageRange,
+		overview,
+		branches: groupProjectRecordsByBranch(records, options.project),
+		skippedLines: options.skippedLines,
+	};
+}
+
+function formatProjectUsageReport(records: UsageLedgerRecord[], options: { project: string; skippedLines: number }): string {
+	const report = buildProjectUsageReport(records, options);
+	const lines = [
+		`Usage for project ${options.project} — ${titleForRange(report.range)}`,
+		"",
+		"Overview",
+		`Cost: ${formatCost(report.overview.totalCost)}${report.overview.tokenOnlyCalls ? ` (${report.overview.tokenOnlyCalls} token-only calls)` : ""}`,
+		`Tokens: ${formatTokens(report.overview.totalTokens)} total  ↑${formatTokens(report.overview.input)}  ↓${formatTokens(report.overview.output)}  R${formatTokens(report.overview.cacheRead)}  W${formatTokens(report.overview.cacheWrite)}`,
+		`Calls: ${report.overview.calls}  Models: ${report.overview.models}`,
+		"",
+		"Branches",
+	];
+
+	if (report.branches.length) {
+		for (const entry of report.branches) {
+			lines.push(`- ${entry.label} — ${entry.summary.calls} calls, ${formatTokens(entry.summary.totalTokens)} tokens, ${formatCost(entry.summary.totalCost)}`);
+		}
+	} else {
+		lines.push("No usage records found.");
+	}
+
+	if (options.skippedLines) lines.push(`Skipped corrupt ledger lines: ${options.skippedLines}`);
 	return lines.join("\n");
 }
 
@@ -457,7 +541,8 @@ function formatHelp(json: boolean): string {
 			{ command: "/usage lifetime", description: "Show lifetime summary" },
 			{ command: "/usage project", description: "Select a recorded project and show lifetime usage" },
 			{ command: "/usage project --list", description: "List recorded projects" },
-			{ command: "/usage project <project>", description: "Show lifetime usage for a project" },
+			{ command: "/usage project <project>", description: "Show lifetime usage overview and branch breakdown for a project" },
+			{ command: "/usage project <project> --branch", description: "Select a recorded branch and show project usage for that branch" },
 			{ command: "/usage model --list", description: "List recorded models" },
 			{ command: "/usage model <model>", description: "Show lifetime usage for a model" },
 			{ command: "/usage skills [range]", description: "Show skill usage counts" },
@@ -468,6 +553,7 @@ function formatHelp(json: boolean): string {
 			{ option: "--project <project>", description: "Filter a time range or skill report by project" },
 			{ option: "--project", description: "With /usage skills, group skill usage by project" },
 			{ option: "--model <model>", description: "Filter a time range by model" },
+			{ option: "--branch [branch]", description: "Filter project usage by local git branch, or select one interactively when omitted" },
 			{ option: "--list", description: "List values for project/model commands" },
 			{ option: "--json", description: "Emit machine-readable JSON" },
 			{ option: "-y, --yes", description: "Skip confirmation for /usage clear" },
@@ -698,7 +784,8 @@ async function getProjectInfo(cwd: string): Promise<ProjectInfo> {
 	const rawCommonDir = await git(cwd, ["rev-parse", "--git-common-dir"]);
 	const remote = normalizeGitRemote(await git(cwd, ["remote", "get-url", "origin"]));
 	const gitCommonDir = resolveGitPath(gitRoot ?? cwd, rawCommonDir);
-	const project: ProjectInfo = { name: null, gitRemote: remote, gitRoot, gitCommonDir };
+	const gitBranch = await git(cwd, ["branch", "--show-current"]);
+	const project: ProjectInfo = { name: null, gitRemote: remote, gitRoot, gitCommonDir, gitBranch };
 	project.name = deriveProjectName(project, cwd);
 	return project;
 }
@@ -764,7 +851,7 @@ function buildRecord(ctx: ExtensionContext, message: any): UsageLedgerRecord {
 		sessionFile,
 		sessionEntryId,
 		cwd,
-		project: { name: null, gitRemote: null, gitRoot: null, gitCommonDir: null },
+		project: { name: null, gitRemote: null, gitRoot: null, gitCommonDir: null, gitBranch: null },
 		provider: message.provider ?? (ctx as any).model?.provider ?? null,
 		model: message.model ?? (ctx as any).model?.id ?? null,
 		api: message.api ?? (ctx as any).model?.api ?? null,
@@ -794,6 +881,24 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 
 	if (parsed.error) {
 		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error: parsed.error }, null, 2) : parsed.error, parsed.json);
+		return;
+	}
+
+	if ((parsed.branch || parsed.selectBranch) && (parsed.mode === "skills" || parsed.mode === "clear" || parsed.list)) {
+		const error = "--branch is only supported for project usage reports and project-filtered usage summaries.";
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error }, null, 2) : error, parsed.json);
+		return;
+	}
+
+	if (parsed.mode === "summary" && parsed.branch && !parsed.project) {
+		const error = "--branch requires --project or /usage project <project>.";
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error }, null, 2) : error, parsed.json);
+		return;
+	}
+
+	if (parsed.mode === "summary" && parsed.selectBranch) {
+		const error = "Interactive branch selection is only supported with /usage project <project> --branch.";
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error }, null, 2) : error, parsed.json);
 		return;
 	}
 
@@ -880,9 +985,37 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 		parsed.project = selected;
 	}
 
+	if (parsed.branch && !parsed.project) {
+		const error = "--branch requires --project or /usage project <project>.";
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error, skippedLines }, null, 2) : error, parsed.json);
+		return;
+	}
+
 	if (parsed.project && !records.some((record) => matchesProject(record, parsed.project!))) {
 		const error = `No usage records found for project "${parsed.project}". Try /usage project --list.`;
 		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error, projects: listProjects(records), skippedLines }, null, 2) : error, parsed.json);
+		return;
+	}
+
+	if (parsed.mode === "project" && parsed.project && parsed.selectBranch && !parsed.branch) {
+		const branches = groupProjectRecordsByBranch(records, parsed.project).map((entry) => entry.label);
+		if (!ctx.hasUI) {
+			const error = "Branch selection requires an interactive UI. Use /usage project <project> --branch <branch> instead.";
+			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error, branches, skippedLines }, null, 2) : error, parsed.json);
+			return;
+		}
+
+		const selected = await ctx.ui.select(`Select branch usage to view for ${parsed.project}:`, branches);
+		if (!selected) {
+			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, cancelled: true, branches, skippedLines }, null, 2) : "Branch selection cancelled.", parsed.json);
+			return;
+		}
+		parsed.branch = selected;
+	}
+
+	if (parsed.branch && !records.some((record) => matchesProject(record, parsed.project!) && matchesBranch(record, parsed.branch!))) {
+		const error = `No usage records found for branch "${parsed.branch}" in project "${parsed.project}".`;
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error, skippedLines }, null, 2) : error, parsed.json);
 		return;
 	}
 
@@ -892,7 +1025,13 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 		return;
 	}
 
-	const summary = summarizeRecords(records, { range: parsed.range, project: parsed.project, model: parsed.model, skippedLines });
+	if (parsed.mode === "project" && parsed.project && !parsed.branch) {
+		const report = buildProjectUsageReport(records, { project: parsed.project, skippedLines });
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, report }, null, 2) : formatProjectUsageReport(records, { project: parsed.project, skippedLines }), parsed.json);
+		return;
+	}
+
+	const summary = summarizeRecords(records, { range: parsed.range, project: parsed.project, model: parsed.model, branch: parsed.branch, skippedLines });
 	await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, summary }, null, 2) : formatSummary(summary), parsed.json);
 }
 

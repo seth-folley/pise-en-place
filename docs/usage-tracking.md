@@ -11,7 +11,7 @@ Each record includes:
 - timestamp and recorded time
 - session file and session entry ID
 - current working directory
-- git-derived project metadata
+- git-derived project metadata, including the local git branch when available
 - provider, model, and API
 - input, output, cache read, and cache write tokens
 - total tokens
@@ -47,11 +47,11 @@ usage.totalCost = null
 
 This keeps token usage visible without inventing a spend amount. Some OAuth/subscription-backed providers still expose estimated or extra-usage costs in Pi; those costs are recorded.
 
-## Project grouping
+## Project and branch grouping
 
 The extension keeps the actual Pi `cwd` for debugging, but project reports are grouped with git metadata.
 
-Grouping priority:
+Project grouping priority:
 
 1. normalized git remote URL
 2. git common directory
@@ -59,6 +59,8 @@ Grouping priority:
 4. current working directory
 
 This avoids splitting usage across multiple git worktrees for the same project when possible.
+
+Branch tracking stores the local git branch name from `git branch --show-current`. Detached HEADs, non-git directories, and older records without branch metadata are grouped as `untracked` in project branch reports.
 
 ## Commands
 
@@ -82,7 +84,11 @@ Projects:
 ```text
 /usage project --list
 /usage project <project>
+/usage project <project> --branch
+/usage project <project> --branch <branch>
 ```
+
+`/usage project <project>` shows a lifetime project report with an overview section and a branch breakdown. Branch names are local to a project; use `--branch` with no value to select a recorded branch interactively, or `--branch <branch>` to filter directly.
 
 Models:
 
@@ -120,7 +126,10 @@ Filter time ranges:
 /usage month --project <project>
 /usage today --model <model>
 /usage lifetime --project <project> --model <model>
+/usage month --project <project> --branch <branch>
 ```
+
+`--branch` requires a project because local branch names may repeat across repositories.
 
 Help:
 
@@ -135,6 +144,8 @@ Machine-readable output:
 /usage --json
 /usage project --list --json
 /usage month --project <project> --json
+/usage project <project> --json
+/usage month --project <project> --branch <branch> --json
 /usage skills --json
 /usage skills --project --json
 /usage -h --json
