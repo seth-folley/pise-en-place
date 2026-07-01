@@ -1,6 +1,6 @@
 # pise-en-place
 
-Personal Pi extension package for safety checks, usage tracking, status UI, skill upkeep, PR lookup, and sharing helpers.
+Personal Pi extension package for safety checks, usage tracking, status UI, skill upkeep, PR lookup, markdown output, and sharing helpers.
 
 ## Install as a local Pi package
 
@@ -26,7 +26,7 @@ extensions/
   usage/           token/cost ledger and /usage command
   skills/          skill read tracking and skill update flows
   ui/              status line, response timing, ask_user UI tool
-  productivity/    PR lookup, local sharing, session helpers, roadmap writer
+  productivity/    PR lookup, markdown output, local sharing, session helpers, roadmap writer
 src/shared/        shared implementation helpers used by extensions
 docs/              design notes and user-facing docs
 ```

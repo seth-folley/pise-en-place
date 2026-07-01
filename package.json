@@ -50,6 +50,7 @@
       "./extensions/productivity/copy-session-id.ts",
       "./extensions/productivity/current-pr.ts",
       "./extensions/productivity/local-share.ts",
+      "./extensions/productivity/markdown-output.ts",
       "./extensions/productivity/roadmap-writer.ts",
       "./extensions/productivity/todos.ts"
     ],
