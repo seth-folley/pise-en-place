@@ -30,7 +30,7 @@ const skillReadLedgerPath = path.join(os.homedir(), ".pi", "agent", "skill-reads
 const schemaVersion = 1;
 
 type UsageRange = "today" | "week" | "month" | "lifetime";
-type UsageMode = "summary" | "project" | "model" | "skills" | "clear";
+type UsageMode = "summary" | "report" | "project" | "model" | "skills" | "clear";
 
 type ProjectInfo = {
 	name: string | null;
@@ -72,6 +72,7 @@ type ParsedUsageCommand = {
 	mode: UsageMode;
 	range: UsageRange;
 	json: boolean;
+	visual: boolean;
 	list: boolean;
 	help: boolean;
 	yes: boolean;
@@ -97,6 +98,32 @@ type UsageSummary = {
 	tokenOnlyCalls: number;
 	projects: number;
 	models: number;
+	skippedLines: number;
+};
+
+type UsageReportGroup = {
+	key: string;
+	calls: number;
+	totalTokens: number;
+	totalCost: number;
+	tokenOnlyCalls: number;
+};
+
+type UsageReport = {
+	range: UsageRange;
+	filter?: { project?: string; model?: string; branch?: string };
+	overview: UsageSummary;
+	providers: UsageReportGroup[];
+	models: UsageReportGroup[];
+	projects: UsageReportGroup[];
+	topRecords: Array<{
+		timestamp: string;
+		project: string;
+		provider: string;
+		model: string;
+		totalTokens: number;
+		totalCost: number | null;
+	}>;
 	skippedLines: number;
 };
 
@@ -181,7 +208,7 @@ function tokenizeArgs(args: string): string[] {
 // execution can be shared across text and JSON output modes.
 function parseUsageArgs(args: string): ParsedUsageCommand {
 	const tokens = tokenizeArgs(args);
-	const command: ParsedUsageCommand = { mode: "summary", range: "month", json: false, list: false, help: false, yes: false };
+	const command: ParsedUsageCommand = { mode: "summary", range: "month", json: false, visual: false, list: false, help: false, yes: false };
 	const positionals: string[] = [];
 
 	for (let i = 0; i < tokens.length; i++) {
@@ -189,6 +216,11 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 
 		if (token === "--json") {
 			command.json = true;
+			continue;
+		}
+
+		if (token === "--visual") {
+			command.visual = true;
 			continue;
 		}
 
@@ -242,6 +274,18 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 
 	const first = positionals[0];
 	if (!first) {
+		if (command.groupByProject) return { ...command, error: "Missing value for --project" };
+		return command;
+	}
+
+	if (first === "report") {
+		command.mode = "report";
+		if (positionals.length > 1) {
+			const range = positionals[1];
+			if (!["today", "week", "month", "lifetime"].includes(range)) return { ...command, error: `Unknown report range: ${range}` };
+			command.range = range as UsageRange;
+		}
+		if (positionals.length > 2) return { ...command, error: `Unexpected argument: ${positionals[2]}` };
 		if (command.groupByProject) return { ...command, error: "Missing value for --project" };
 		return command;
 	}
@@ -530,6 +574,148 @@ function formatProjectUsageReport(records: UsageLedgerRecord[], options: { proje
 	return lines.join("\n");
 }
 
+function addReportGroup(map: Map<string, UsageReportGroup>, key: string, record: UsageLedgerRecord): void {
+	const entry = map.get(key) ?? { key, calls: 0, totalTokens: 0, totalCost: 0, tokenOnlyCalls: 0 };
+	entry.calls += 1;
+	entry.totalTokens += record.usage.totalTokens;
+	if (typeof record.usage.totalCost === "number") entry.totalCost += record.usage.totalCost;
+	else entry.tokenOnlyCalls += 1;
+	map.set(key, entry);
+}
+
+function sortedReportGroups(map: Map<string, UsageReportGroup>): UsageReportGroup[] {
+	return Array.from(map.values()).sort((a, b) => b.totalCost - a.totalCost || b.totalTokens - a.totalTokens || a.key.localeCompare(b.key));
+}
+
+function buildUsageReport(records: UsageLedgerRecord[], options: { range: UsageRange; project?: string; model?: string; branch?: string; skippedLines: number }): UsageReport {
+	const filtered = filterRecords(records, options);
+	const providers = new Map<string, UsageReportGroup>();
+	const models = new Map<string, UsageReportGroup>();
+	const projects = new Map<string, UsageReportGroup>();
+
+	for (const record of filtered) {
+		addReportGroup(providers, record.provider ?? "unknown", record);
+		addReportGroup(models, getModelKey(record), record);
+		addReportGroup(projects, getProjectKey(record), record);
+	}
+
+	return {
+		range: options.range,
+		filter: { project: options.project, model: options.model, branch: options.branch },
+		overview: summarizeRecords(records, options),
+		providers: sortedReportGroups(providers),
+		models: sortedReportGroups(models),
+		projects: sortedReportGroups(projects),
+		topRecords: filtered
+			.filter((record) => typeof record.usage.totalCost === "number")
+			.sort((a, b) => (b.usage.totalCost ?? 0) - (a.usage.totalCost ?? 0) || b.usage.totalTokens - a.usage.totalTokens)
+			.slice(0, 10)
+			.map((record) => ({
+				timestamp: record.timestamp,
+				project: getProjectKey(record),
+				provider: record.provider ?? "unknown",
+				model: getModelKey(record),
+				totalTokens: record.usage.totalTokens,
+				totalCost: record.usage.totalCost,
+			})),
+		skippedLines: options.skippedLines,
+	};
+}
+
+function formatReportGroupLines(groups: UsageReportGroup[], emptyText: string): string[] {
+	if (!groups.length) return [emptyText];
+	return groups.slice(0, 10).map((group) => {
+		const tokenOnly = group.tokenOnlyCalls ? `, ${group.tokenOnlyCalls} token-only` : "";
+		return `- ${group.key} — ${formatCost(group.totalCost)}, ${formatTokens(group.totalTokens)} tokens, ${group.calls} calls${tokenOnly}`;
+	});
+}
+
+function formatUsageReport(records: UsageLedgerRecord[], options: { range: UsageRange; project?: string; model?: string; branch?: string; skippedLines: number }): string {
+	const report = buildUsageReport(records, options);
+	const titleParts = [`Usage report — ${titleForRange(report.range)}`];
+	if (options.project) titleParts.push(`project: ${options.project}`);
+	if (options.branch) titleParts.push(`branch: ${options.branch}`);
+	if (options.model) titleParts.push(`model: ${options.model}`);
+
+	const lines = [
+		titleParts.join(" • "),
+		`Total: ${formatCost(report.overview.totalCost)} across ${report.overview.calls} calls, ${formatTokens(report.overview.totalTokens)} tokens`,
+		"",
+		"By provider",
+		...formatReportGroupLines(report.providers, "No provider usage records found."),
+		"",
+		"By model",
+		...formatReportGroupLines(report.models, "No model usage records found."),
+		"",
+		"By project",
+		...formatReportGroupLines(report.projects, "No project usage records found."),
+		"",
+		"Top cost records",
+	];
+
+	if (report.topRecords.length) {
+		for (const record of report.topRecords) {
+			lines.push(`- ${record.timestamp} — ${formatCost(record.totalCost ?? 0)}, ${formatTokens(record.totalTokens)} tokens, ${record.model}, ${record.project}`);
+		}
+	} else {
+		lines.push("No costed records found.");
+	}
+
+	if (report.overview.tokenOnlyCalls) lines.push(`Token-only calls: ${report.overview.tokenOnlyCalls}`);
+	if (options.skippedLines) lines.push(`Skipped corrupt ledger lines: ${options.skippedLines}`);
+	return lines.join("\n");
+}
+
+function formatPercent(value: number, total: number): string {
+	if (total <= 0) return "0%";
+	const percent = (value / total) * 100;
+	return `${percent.toFixed(percent < 10 ? 1 : 0)}%`;
+}
+
+function formatBar(value: number, max: number, width = 24): string {
+	if (max <= 0 || value <= 0) return "░".repeat(width);
+	const filled = Math.max(1, Math.round((value / max) * width));
+	return "█".repeat(filled) + "░".repeat(Math.max(0, width - filled));
+}
+
+function formatVisualGroup(title: string, groups: UsageReportGroup[]): string[] {
+	const visible = groups.slice(0, 10);
+	const maxCost = Math.max(...visible.map((group) => group.totalCost), 0);
+	const totalCost = groups.reduce((sum, group) => sum + group.totalCost, 0);
+	const lines = [title];
+	if (!visible.length) return [...lines, "No usage records found."];
+
+	const labelWidth = Math.min(32, Math.max(...visible.map((group) => group.key.length), 10));
+	for (const group of visible) {
+		const label = group.key.length > labelWidth ? `${group.key.slice(0, labelWidth - 1)}…` : group.key.padEnd(labelWidth);
+		const tokenOnly = group.tokenOnlyCalls ? `  token-only:${group.tokenOnlyCalls}` : "";
+		lines.push(`${label}  ${formatBar(group.totalCost, maxCost)}  ${formatCost(group.totalCost).padStart(8)}  ${formatPercent(group.totalCost, totalCost).padStart(5)}  ${formatTokens(group.totalTokens).padStart(6)} tok  ${group.calls} calls${tokenOnly}`);
+	}
+	return lines;
+}
+
+function formatVisualUsageReport(records: UsageLedgerRecord[], options: { range: UsageRange; project?: string; model?: string; branch?: string; skippedLines: number }): string {
+	const report = buildUsageReport(records, options);
+	const titleParts = [`Usage graph — ${titleForRange(report.range)}`];
+	if (options.project) titleParts.push(`project: ${options.project}`);
+	if (options.branch) titleParts.push(`branch: ${options.branch}`);
+	if (options.model) titleParts.push(`model: ${options.model}`);
+
+	const lines = [
+		titleParts.join(" • "),
+		`Total ${formatCost(report.overview.totalCost)} • ${report.overview.calls} calls • ${formatTokens(report.overview.totalTokens)} tokens${report.overview.tokenOnlyCalls ? ` • ${report.overview.tokenOnlyCalls} token-only calls` : ""}`,
+		"",
+		...formatVisualGroup("By project", report.projects),
+		"",
+		...formatVisualGroup("By provider", report.providers),
+		"",
+		...formatVisualGroup("By model", report.models),
+	];
+
+	if (options.skippedLines) lines.push("", `Skipped corrupt ledger lines: ${options.skippedLines}`);
+	return lines.join("\n");
+}
+
 function formatHelp(json: boolean): string {
 	const help = {
 		usage: "/usage [subcommand] [options]",
@@ -539,6 +725,8 @@ function formatHelp(json: boolean): string {
 			{ command: "/usage week", description: "Show current week summary" },
 			{ command: "/usage month", description: "Show current month summary" },
 			{ command: "/usage lifetime", description: "Show lifetime summary" },
+			{ command: "/usage report [range]", description: "Show spend grouped by provider, model, project, and top cost records" },
+			{ command: "/usage report --visual", description: "Show static horizontal spend graphs by project, provider, and model" },
 			{ command: "/usage project", description: "Select a recorded project and show lifetime usage" },
 			{ command: "/usage project --list", description: "List recorded projects" },
 			{ command: "/usage project <project>", description: "Show lifetime usage overview and branch breakdown for a project" },
@@ -556,6 +744,7 @@ function formatHelp(json: boolean): string {
 			{ option: "--branch [branch]", description: "Filter project usage by local git branch, or select one interactively when omitted" },
 			{ option: "--list", description: "List values for project/model commands" },
 			{ option: "--json", description: "Emit machine-readable JSON" },
+			{ option: "--visual", description: "With /usage report, show static horizontal bar charts" },
 			{ option: "-y, --yes", description: "Skip confirmation for /usage clear" },
 			{ option: "-h, --help", description: "Show this help" },
 		],
@@ -890,13 +1079,25 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 		return;
 	}
 
-	if (parsed.mode === "summary" && parsed.branch && !parsed.project) {
+	if ((parsed.mode === "summary" || parsed.mode === "report") && parsed.branch && !parsed.project) {
 		const error = "--branch requires --project or /usage project <project>.";
 		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error }, null, 2) : error, parsed.json);
 		return;
 	}
 
-	if (parsed.mode === "summary" && parsed.selectBranch) {
+	if (parsed.visual && parsed.mode !== "report") {
+		const error = "--visual is only supported with /usage report.";
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error }, null, 2) : error, parsed.json);
+		return;
+	}
+
+	if (parsed.visual && parsed.json) {
+		const error = "--visual cannot be combined with --json.";
+		await notifyOutput(ctx, JSON.stringify({ ok: false, error }, null, 2), parsed.json);
+		return;
+	}
+
+	if ((parsed.mode === "summary" || parsed.mode === "report") && parsed.selectBranch) {
 		const error = "Interactive branch selection is only supported with /usage project <project> --branch.";
 		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error }, null, 2) : error, parsed.json);
 		return;
@@ -1028,6 +1229,15 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 	if (parsed.mode === "project" && parsed.project && !parsed.branch) {
 		const report = buildProjectUsageReport(records, { project: parsed.project, skippedLines });
 		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, report }, null, 2) : formatProjectUsageReport(records, { project: parsed.project, skippedLines }), parsed.json);
+		return;
+	}
+
+	if (parsed.mode === "report") {
+		const report = buildUsageReport(records, { range: parsed.range, project: parsed.project, model: parsed.model, branch: parsed.branch, skippedLines });
+		const text = parsed.visual
+			? formatVisualUsageReport(records, { range: parsed.range, project: parsed.project, model: parsed.model, branch: parsed.branch, skippedLines })
+			: formatUsageReport(records, { range: parsed.range, project: parsed.project, model: parsed.model, branch: parsed.branch, skippedLines });
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, report }, null, 2) : text, parsed.json);
 		return;
 	}
 

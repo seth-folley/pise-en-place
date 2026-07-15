@@ -13,6 +13,7 @@ Each record includes:
 - current working directory
 - git-derived project metadata, including the local git branch when available
 - provider, model, and API
+- provider-reported usage/cost surfaced through Pi for each response
 - input, output, cache read, and cache write tokens
 - total tokens
 - total estimated cost, when meaningful
@@ -79,6 +80,23 @@ Time ranges:
 /usage lifetime
 ```
 
+Spend reports:
+
+```text
+/usage report
+/usage report today
+/usage report week
+/usage report month
+/usage report lifetime
+/usage report --project <project>
+/usage report --model <model>
+/usage report --visual
+```
+
+`/usage report` defaults to month-to-date and groups spend by provider, model, and project. It also lists the top costed assistant responses without storing prompt or response content.
+
+`/usage report --visual` renders a static terminal-friendly usage graph with horizontal bars for project, provider, and model spend. It can be combined with range and filter options, but not with `--json`.
+
 Projects:
 
 ```text
@@ -142,6 +160,9 @@ Machine-readable output:
 
 ```text
 /usage --json
+/usage report --json
+/usage report month --project <project> --json
+/usage report --visual
 /usage project --list --json
 /usage month --project <project> --json
 /usage project <project> --json
@@ -155,6 +176,7 @@ Machine-readable output:
 
 - Tracking starts only after the extension is enabled.
 - There is no rescan of older session files in v1.
+- Reports use Pi's provider-reported per-response usage/cost from the local ledger, not external provider billing APIs.
 - Summaries are derived from raw JSONL records on demand.
 - If the ledger becomes too large or concurrent writes become a problem, migrate to SQLite rather than adding rollups.
 - Corrupt JSONL lines are skipped and counted instead of crashing commands.

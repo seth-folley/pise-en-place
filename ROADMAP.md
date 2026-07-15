@@ -64,6 +64,8 @@ A lightweight place to track what has been added, what is next, and longer-term 
 ### Usage tracking and reporting
 
 - **Usage ledger validation** — Add fixture-based tests for parsing, filtering, summaries, and corrupt JSONL lines.
+- **Usage recommendations** — Add `/usage recommendations` or `/usage report --recommend` to turn recorded spend into actionable suggestions, such as expensive models, high-spend projects, token-only calls, and projects that may benefit from context filtering.
+- **Last response cost feedback** — After assistant responses, optionally show the last response cost/tokens and month-to-date spend, with thresholding so low-cost calls do not create notification noise.
 
 ### TUI and process display
 
@@ -84,6 +86,7 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 ### Context file filtering
 
+- **Context weight report** — Add `/context weight` to estimate prompt-size contribution from project context files and visible skills, helping decide what to hide with `/context project config`.
 - **Runtime context reinjection** — Revisit commands for including ignored context files mid-session, such as `/context include`, `/context ignore`, or `/context include-once`.
 - **Load-time context filtering** — Revisit an SDK wrapper or Pi core hook that filters `AGENTS.md`/`CLAUDE.md` before Pi records them as loaded, avoiding prompt-string surgery and startup-header mismatch.
 - **Skill path filtering** — Add `skills.scope: "paths"` using each skill's `<location>`/`filePath`, in addition to the current `skills.scope: "names"` support.
@@ -102,6 +105,7 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 ### Status line and response feedback
 
+- **Monthly budget status indicator** — Show month-to-date recorded spend against a configurable monthly cap in the status line or status area, with warning colors as usage approaches the cap.
 - **More status line themes** — Add additional status line styles beyond Dracula and minimal.
 
 ### Agent orchestration
