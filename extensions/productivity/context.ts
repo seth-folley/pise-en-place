@@ -18,11 +18,10 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { askQuestionnaire } from "../../src/shared/interactive-questions.ts";
+import { expandHome, detectProject, type ProjectInfo } from "../../src/shared/project-detection.ts";
 
 const commandName = "context";
 const noContextFilesValue = "__context-filter-none-files__";
@@ -55,12 +54,7 @@ type SettingsWithContextFilter = Record<string, unknown> & {
 
 type ContextConfigAnswer = "enabled" | "disabled" | string;
 
-type ProjectInfo = {
-	id?: string;
-	gitRoot?: string;
-	remoteUrl?: string;
-	error?: string;
-};
+
 
 type ActiveRuleState = {
 	project: ProjectInfo;
@@ -79,11 +73,6 @@ type SkillInfo = {
 	name: string;
 };
 
-function expandHome(value: string): string {
-	if (value === "~") return os.homedir();
-	if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
-	return value;
-}
 
 function readJsonFile(filePath: string): SettingsWithContextFilter {
 	try {
@@ -118,46 +107,8 @@ function loadConfig(cwd: string): ContextFileFilterConfig | undefined {
 	return mergeConfig(globalSettings.contextFileFilter, projectSettings.contextFileFilter);
 }
 
-function git(args: string[], cwd: string): string | undefined {
-	try {
-		return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || undefined;
-	} catch {
-		return undefined;
-	}
-}
 
-function normalizeRemoteUrl(remoteUrl: string): string | undefined {
-	const trimmed = remoteUrl.trim();
-	const scpLike = trimmed.match(/^([^@\s]+@)?([^:\s]+):(.+)$/);
-	if (scpLike && !trimmed.includes("://")) {
-		const host = scpLike[2].toLowerCase();
-		const repoPath = scpLike[3].replace(/\.git$/i, "").replace(/^\/+/, "");
-		return `${host}:${repoPath}`;
-	}
 
-	try {
-		const parsed = new URL(trimmed);
-		const host = parsed.hostname.toLowerCase();
-		const repoPath = parsed.pathname.replace(/^\/+/, "").replace(/\.git$/i, "");
-		if (!host || !repoPath) return undefined;
-		return `${host}:${repoPath}`;
-	} catch {
-		return undefined;
-	}
-}
-
-function detectProject(cwd: string): ProjectInfo {
-	const gitRoot = git(["rev-parse", "--show-toplevel"], cwd);
-	if (!gitRoot) return { error: "not inside a Git worktree" };
-
-	const remoteUrl = git(["config", "--get", "remote.origin.url"], gitRoot) ?? git(["remote", "get-url", "origin"], gitRoot);
-	if (!remoteUrl) return { gitRoot, error: "Git remote origin is not configured" };
-
-	const id = normalizeRemoteUrl(remoteUrl);
-	if (!id) return { gitRoot, remoteUrl, error: "could not normalize Git remote origin URL" };
-
-	return { id, gitRoot, remoteUrl };
-}
 
 function resolveState(cwd: string): ActiveRuleState {
 	const project = detectProject(cwd);
@@ -176,6 +127,48 @@ function resolveState(cwd: string): ActiveRuleState {
 	if (!hasContextIgnores && !hasSkillIgnores) return { project, config, rule, active: false, reason: "project rule has no ignore entries" };
 
 	return { project, config, rule, active: true };
+}
+
+type PrivateGuidanceState = {
+	active: boolean;
+	key?: string;
+	path?: string;
+	error?: string;
+};
+
+function resolvePrivateGuidance(projectId: string | undefined): PrivateGuidanceState {
+	if (!projectId) return { active: false };
+
+	const configPath = path.join(getAgentDir(), "projects.json");
+	try {
+		if (!existsSync(configPath)) return { active: false };
+		const parsed = JSON.parse(readFileSync(configPath, "utf8"));
+
+		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+			return { active: false, error: "projects.json must be a top-level object" };
+		}
+
+		const projectConfig = parsed[projectId];
+		if (projectConfig === undefined) return { active: false };
+
+		if (projectConfig === null || typeof projectConfig !== "object" || Array.isArray(projectConfig)) {
+			return { active: false, key: projectId, error: `entry for ${projectId} must be an object` };
+		}
+
+		const guidance = projectConfig.additional_guidance;
+		if (guidance === undefined) return { active: false };
+
+		if (typeof guidance !== "string" || guidance.trim() === "") {
+			return { active: false, key: projectId, error: `additional_guidance for ${projectId} must be a non-empty string path` };
+		}
+
+		const guidancePath = guidance.trim();
+		const expandedPath = expandHome(guidancePath);
+		return { active: true, key: projectId, path: expandedPath };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { active: false, error: `failed to read projects.json: ${message}` };
+	}
 }
 
 function toPosixPath(value: string): string {
@@ -302,7 +295,7 @@ function formatList(items: string[], emptyText: string): string[] {
 	return items.map((item) => `- ${item}`);
 }
 
-function formatStatus(state: ActiveRuleState, cwd: string, lastLoadedPaths: string[], ignoredThisSession: string[], ignoredSkillsThisSession: string[]): string {
+function formatStatus(state: ActiveRuleState, cwd: string, lastLoadedPaths: string[], ignoredThisSession: string[], ignoredSkillsThisSession: string[], privateGuidanceState: PrivateGuidanceState): string {
 	const lines = ["Context filter", ""];
 	lines.push(`Project: ${state.project.id ?? "unknown"}`);
 	if (state.project.gitRoot) lines.push(`Git root: ${state.project.gitRoot}`);
@@ -340,6 +333,16 @@ function formatStatus(state: ActiveRuleState, cwd: string, lastLoadedPaths: stri
 	lines.push(...formatList(ignoredThisSession, "- (none yet)"));
 	lines.push("", "Ignored skills this session:");
 	lines.push(...formatList(ignoredSkillsThisSession, "- (none yet)"));
+
+	lines.push("", "Private guidance:");
+	if (privateGuidanceState.active) {
+		lines.push(`Key: ${privateGuidanceState.key}`);
+		lines.push(`File: ${privateGuidanceState.path}`);
+	} else if (privateGuidanceState.error) {
+		lines.push(`Error: ${privateGuidanceState.error}`);
+	} else {
+		lines.push("Inactive: no additional_guidance configured for this project");
+	}
 
 	return lines.join("\n");
 }
@@ -420,6 +423,9 @@ export default function contextExtension(pi: ExtensionAPI) {
 	let ignoredSkillsThisSession: string[] = [];
 	const notifiedIgnoredSets = new Set<string>();
 	const notifiedIgnoredSkillSets = new Set<string>();
+	let privateGuidanceState: PrivateGuidanceState = { active: false };
+	const privateGuidanceNotifiedPaths = new Set<string>();
+	const notifiedGuidanceErrors = new Set<string>();
 
 	function refreshState(cwd: string): ActiveRuleState {
 		state = resolveState(cwd);
@@ -433,6 +439,9 @@ export default function contextExtension(pi: ExtensionAPI) {
 		ignoredSkillsThisSession = [];
 		notifiedIgnoredSets.clear();
 		notifiedIgnoredSkillSets.clear();
+		privateGuidanceState = { active: false };
+		privateGuidanceNotifiedPaths.clear();
+		notifiedGuidanceErrors.clear();
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
@@ -443,13 +452,14 @@ export default function contextExtension(pi: ExtensionAPI) {
 
 		const ignored = contextFiles.filter((file) => shouldIgnoreContextFile(file, ctx.cwd, currentState));
 		const ignoredSkills = skills.filter((skill) => shouldIgnoreSkill(skill, currentState));
-		if (!ignored.length && !ignoredSkills.length) return;
 
 		let systemPrompt = event.systemPrompt;
+		let modified = false;
 
 		if (ignored.length) {
 			ignoredThisSession = Array.from(new Set([...ignoredThisSession, ...ignored.map((file) => file.path)])).sort();
 			systemPrompt = removeContextBlocks(systemPrompt, ignored);
+			modified = true;
 
 			if (ctx.hasUI) {
 				const key = ignored.map((file) => file.path).sort().join("\n");
@@ -463,6 +473,7 @@ export default function contextExtension(pi: ExtensionAPI) {
 		if (ignoredSkills.length) {
 			ignoredSkillsThisSession = Array.from(new Set([...ignoredSkillsThisSession, ...ignoredSkills.map((skill) => skill.name)])).sort();
 			systemPrompt = removeSkillBlocks(systemPrompt, ignoredSkills);
+			modified = true;
 
 			if (ctx.hasUI) {
 				const key = ignoredSkills.map((skill) => skill.name).sort().join("\n");
@@ -473,6 +484,49 @@ export default function contextExtension(pi: ExtensionAPI) {
 			}
 		}
 
+		privateGuidanceState = resolvePrivateGuidance(currentState.project.id);
+
+		if (privateGuidanceState.error && !privateGuidanceState.active) {
+			const errorKey = `${privateGuidanceState.key ?? "unknown"}:${privateGuidanceState.path ?? "none"}:${privateGuidanceState.error}`;
+			if (ctx.hasUI && !notifiedGuidanceErrors.has(errorKey)) {
+				notifiedGuidanceErrors.add(errorKey);
+				ctx.ui.notify(`Private guidance configuration error: ${privateGuidanceState.error}`, "error");
+			}
+		}
+
+		if (privateGuidanceState.active && privateGuidanceState.path) {
+			try {
+				const content = readFileSync(privateGuidanceState.path, "utf8");
+				const guidanceBlock = `<project_instructions path="${privateGuidanceState.path}">\n${content}\n</project_instructions>`;
+				if (/<\/project_context>/.test(systemPrompt)) {
+					systemPrompt = systemPrompt.replace(/(\n?\s*<\/project_context>)/, `\n${guidanceBlock}\n$1`);
+				} else {
+					const projectContextBlock = `<project_context>\n\nProject-specific instructions and guidelines:\n\n${guidanceBlock}\n\n</project_context>`;
+					if (/\n\nThe following skills provide specialized instructions/.test(systemPrompt)) {
+						systemPrompt = systemPrompt.replace(/\n\nThe following skills provide specialized instructions/, `\n\n${projectContextBlock}\n\nThe following skills provide specialized instructions`);
+					} else if (/\nCurrent working directory:/.test(systemPrompt)) {
+						systemPrompt = systemPrompt.replace(/\nCurrent working directory:/, `\n\n${projectContextBlock}\nCurrent working directory:`);
+					} else {
+						systemPrompt = systemPrompt + "\n\n" + projectContextBlock;
+					}
+				}
+				modified = true;
+				if (ctx.hasUI && !privateGuidanceNotifiedPaths.has(privateGuidanceState.path)) {
+					privateGuidanceNotifiedPaths.add(privateGuidanceState.path);
+					ctx.ui.notify(`Private project guidance loaded from ${privateGuidanceState.path}`, "info");
+				}
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				privateGuidanceState = { ...privateGuidanceState, error: message };
+				const errorKey = `${privateGuidanceState.key ?? "unknown"}:${privateGuidanceState.path ?? "none"}:${message}`;
+				if (ctx.hasUI && !notifiedGuidanceErrors.has(errorKey)) {
+					notifiedGuidanceErrors.add(errorKey);
+					ctx.ui.notify(`Failed to load private guidance: ${message}`, "error");
+				}
+			}
+		}
+
+		if (!modified) return;
 		return { systemPrompt };
 	});
 
@@ -587,9 +641,10 @@ export default function contextExtension(pi: ExtensionAPI) {
 			}
 
 			const currentState = refreshState(ctx.cwd);
+			privateGuidanceState = resolvePrivateGuidance(currentState.project.id);
 			const promptPaths = extractContextPaths(ctx.getSystemPrompt());
 			const visibleLoadedPaths = lastLoadedPaths.length ? lastLoadedPaths : promptPaths;
-			ctx.ui.notify(formatStatus(currentState, ctx.cwd, visibleLoadedPaths, ignoredThisSession, ignoredSkillsThisSession), "info");
+			ctx.ui.notify(formatStatus(currentState, ctx.cwd, visibleLoadedPaths, ignoredThisSession, ignoredSkillsThisSession, privateGuidanceState), "info");
 		},
 	});
 }

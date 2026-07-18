@@ -52,7 +52,8 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 ### Productivity helpers
 
 - `extensions/productivity/current-pr.ts` adds `/pr` and the `get_current_branch_pr` tool for GitHub PR lookup via `gh`.
-- `extensions/productivity/context.ts` adds `/context` status and `/context project config` for project-specific context-file and skill filtering.
+- `extensions/productivity/context.ts` adds `/context` status and `/context project config` for project-specific context-file and skill filtering, plus private project guidance injection.
+- See `docs/private-guidance.md` for configuring per-project `additional_guidance` files.
 - `extensions/productivity/todos.ts` adds `/todos`, the `todo` tool, and a session-scoped todo widget.
 - `extensions/productivity/local-share.ts` adds `/share-local` for local HTML transcript export.
 - `extensions/productivity/markdown-output.ts` adds `/md <path>` for rendering markdown file contents.
