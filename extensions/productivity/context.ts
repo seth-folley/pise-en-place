@@ -295,6 +295,36 @@ function formatList(items: string[], emptyText: string): string[] {
 	return items.map((item) => `- ${item}`);
 }
 
+function applyPrivateGuidance(systemPrompt: string, guidanceState: PrivateGuidanceState): { systemPrompt: string; modified: boolean; state: PrivateGuidanceState } {
+	if (!guidanceState.active || !guidanceState.path) return { systemPrompt, modified: false, state: guidanceState };
+
+	try {
+		if (systemPrompt.includes(`<project_instructions path="${guidanceState.path}">`)) {
+			return { systemPrompt, modified: false, state: guidanceState };
+		}
+
+		const content = readFileSync(guidanceState.path, "utf8");
+		const guidanceBlock = `<project_instructions path="${guidanceState.path}">\n${content}\n</project_instructions>`;
+		let nextPrompt: string;
+		if (/<\/project_context>/.test(systemPrompt)) {
+			nextPrompt = systemPrompt.replace(/(\n?\s*<\/project_context>)/, `\n${guidanceBlock}\n$1`);
+		} else {
+			const projectContextBlock = `<project_context>\n\nProject-specific instructions and guidelines:\n\n${guidanceBlock}\n\n</project_context>`;
+			if (/\n\nThe following skills provide specialized instructions/.test(systemPrompt)) {
+				nextPrompt = systemPrompt.replace(/\n\nThe following skills provide specialized instructions/, `\n\n${projectContextBlock}\n\nThe following skills provide specialized instructions`);
+			} else if (/\nCurrent working directory:/.test(systemPrompt)) {
+				nextPrompt = systemPrompt.replace(/\nCurrent working directory:/, `\n\n${projectContextBlock}\nCurrent working directory:`);
+			} else {
+				nextPrompt = systemPrompt + "\n\n" + projectContextBlock;
+			}
+		}
+		return { systemPrompt: nextPrompt, modified: true, state: guidanceState };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { systemPrompt, modified: false, state: { ...guidanceState, error: message } };
+	}
+}
+
 function formatStatus(state: ActiveRuleState, cwd: string, lastLoadedPaths: string[], ignoredThisSession: string[], ignoredSkillsThisSession: string[], privateGuidanceState: PrivateGuidanceState): string {
 	const lines = ["Context filter", ""];
 	lines.push(`Project: ${state.project.id ?? "unknown"}`);
@@ -495,33 +525,20 @@ export default function contextExtension(pi: ExtensionAPI) {
 		}
 
 		if (privateGuidanceState.active && privateGuidanceState.path) {
-			try {
-				const content = readFileSync(privateGuidanceState.path, "utf8");
-				const guidanceBlock = `<project_instructions path="${privateGuidanceState.path}">\n${content}\n</project_instructions>`;
-				if (/<\/project_context>/.test(systemPrompt)) {
-					systemPrompt = systemPrompt.replace(/(\n?\s*<\/project_context>)/, `\n${guidanceBlock}\n$1`);
-				} else {
-					const projectContextBlock = `<project_context>\n\nProject-specific instructions and guidelines:\n\n${guidanceBlock}\n\n</project_context>`;
-					if (/\n\nThe following skills provide specialized instructions/.test(systemPrompt)) {
-						systemPrompt = systemPrompt.replace(/\n\nThe following skills provide specialized instructions/, `\n\n${projectContextBlock}\n\nThe following skills provide specialized instructions`);
-					} else if (/\nCurrent working directory:/.test(systemPrompt)) {
-						systemPrompt = systemPrompt.replace(/\nCurrent working directory:/, `\n\n${projectContextBlock}\nCurrent working directory:`);
-					} else {
-						systemPrompt = systemPrompt + "\n\n" + projectContextBlock;
-					}
-				}
-				modified = true;
-				if (ctx.hasUI && !privateGuidanceNotifiedPaths.has(privateGuidanceState.path)) {
-					privateGuidanceNotifiedPaths.add(privateGuidanceState.path);
-					ctx.ui.notify(`Private project guidance loaded from ${privateGuidanceState.path}`, "info");
-				}
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				privateGuidanceState = { ...privateGuidanceState, error: message };
-				const errorKey = `${privateGuidanceState.key ?? "unknown"}:${privateGuidanceState.path ?? "none"}:${message}`;
+			const guidancePath = privateGuidanceState.path;
+			const result = applyPrivateGuidance(systemPrompt, privateGuidanceState);
+			systemPrompt = result.systemPrompt;
+			privateGuidanceState = result.state;
+			modified = modified || result.modified;
+
+			if (result.modified && ctx.hasUI && !privateGuidanceNotifiedPaths.has(guidancePath)) {
+				privateGuidanceNotifiedPaths.add(guidancePath);
+				ctx.ui.notify(`Private project guidance loaded from ${guidancePath}`, "info");
+			} else if (privateGuidanceState.error) {
+				const errorKey = `${privateGuidanceState.key ?? "unknown"}:${privateGuidanceState.path ?? "none"}:${privateGuidanceState.error}`;
 				if (ctx.hasUI && !notifiedGuidanceErrors.has(errorKey)) {
 					notifiedGuidanceErrors.add(errorKey);
-					ctx.ui.notify(`Failed to load private guidance: ${message}`, "error");
+					ctx.ui.notify(`Failed to load private guidance: ${privateGuidanceState.error}`, "error");
 				}
 			}
 		}
@@ -631,7 +648,20 @@ export default function contextExtension(pi: ExtensionAPI) {
 			}
 
 			if (trimmed === "system-prompt") {
-				ctx.ui.notify(ctx.getSystemPrompt(), "info");
+				const currentState = refreshState(ctx.cwd);
+				const options = (ctx as typeof ctx & { getSystemPromptOptions?: () => { contextFiles?: ContextFile[]; skills?: SkillInfo[] } }).getSystemPromptOptions?.() ?? {};
+				let systemPrompt = ctx.getSystemPrompt();
+
+				const ignored = (options.contextFiles ?? []).filter((file: ContextFile) => shouldIgnoreContextFile(file, ctx.cwd, currentState));
+				if (ignored.length) systemPrompt = removeContextBlocks(systemPrompt, ignored);
+
+				const ignoredSkills = (options.skills ?? []).filter((skill: SkillInfo) => shouldIgnoreSkill(skill, currentState));
+				if (ignoredSkills.length) systemPrompt = removeSkillBlocks(systemPrompt, ignoredSkills);
+
+				privateGuidanceState = resolvePrivateGuidance(currentState.project.id);
+				const result = applyPrivateGuidance(systemPrompt, privateGuidanceState);
+				privateGuidanceState = result.state;
+				ctx.ui.notify(result.systemPrompt, "info");
 				return;
 			}
 
