@@ -1,27 +1,26 @@
 /*
  * Pi extension for shared agent skill updates.
  *
- * This extension keeps Pi focused on UI and orchestration while delegating skill
- * management domain logic to ~/.agents/scripts. It defines:
- *
- * - A custom renderer for skill update output and diff-style lines.
- * - Startup version checks that notify when pinned skills have newer tags.
- * - The /update-skills command for checking, syncing, or interactively choosing
- *   pinned version updates.
- * - A tabbed TUI picker for accepting/rejecting available skill updates.
- *
- * Script communication uses JSON contracts from check-skill-updates.sh and
- * update-skills.sh. The extension should not parse or mutate the manifest
- * directly; scripts own manifest validation, pinning, syncing, and diff artifacts.
+ * The extension owns manifest-based version checks so startup checks do not
+ * depend on ~/.agents/scripts/check-skill-updates.sh. Syncing and pinning remain
+ * delegated to update-skills.sh because they own installation, post-processing,
+ * locking, and manifest mutation.
  */
 
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { askMultiSelectQuestion } from "../../src/shared/interactive-questions.ts";
 
-const updateScript = `${process.env.HOME}/.agents/scripts/update-skills.sh`;
-const checkScript = `${process.env.HOME}/.agents/scripts/check-skill-updates.sh`;
+const agentsHome = join(homedir(), ".agents");
+const skillsDirectory = process.env.AGENTS_SKILLS_DIR ?? join(agentsHome, "skills");
+const manifestPath = process.env.AGENTS_SKILLS_MANIFEST ?? join(skillsDirectory, "manifest.json");
+const updateScript = join(agentsHome, "scripts", "update-skills.sh");
+const checkTimeoutMs = 10_000;
 const messageType = "agent-skills-output";
+const versionPattern = /^v?\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?$/;
 
 type NotifyLevel = "info" | "warning" | "error";
 type NotifyContext = {
@@ -43,10 +42,21 @@ type SkillUpdate = {
 
 type SkillCheckResult = {
     ok: boolean;
-    manifestPath?: string;
+    manifestPath: string;
     updates: SkillUpdate[];
-    skipped?: Array<{ name: string; reason: string }>;
-    failures?: Array<{ name?: string; message: string }>;
+    skipped: Array<{ name: string; reason: string }>;
+    failures: Array<{ name?: string; message: string }>;
+};
+
+type SkillManifestEntry = {
+    name?: unknown;
+    source?: unknown;
+    ref?: unknown;
+    enabled?: unknown;
+};
+
+type SkillManifest = {
+    skills?: unknown;
 };
 
 type SkillPinResult = {
@@ -157,21 +167,107 @@ export default function (pi: ExtensionAPI) {
         });
     }
 
-    // Calls the check script's JSON contract and returns parsed update metadata.
-    async function checkSkillUpdates() {
-        const result = await runScript(checkScript, ["--json"], 60_000);
-
+    // Reads the local manifest and checks each version-pinned source directly.
+    // A timeout per remote prevents a weak connection from delaying session start.
+    async function checkSkillUpdates(): Promise<SkillCheckResult> {
+        let manifest: SkillManifest;
         try {
+            manifest = JSON.parse(await readFile(manifestPath, "utf8")) as SkillManifest;
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
             return {
-                ...result,
-                check: JSON.parse(result.output) as SkillCheckResult,
-            };
-        } catch {
-            return {
-                ...result,
-                check: undefined,
+                ok: false,
+                manifestPath,
+                updates: [],
+                skipped: [],
+                failures: [{ message: `Failed to read skills manifest: ${reason}` }],
             };
         }
+
+        if (!Array.isArray(manifest.skills)) {
+            return {
+                ok: false,
+                manifestPath,
+                updates: [],
+                skipped: [],
+                failures: [{ message: "Skills manifest must contain a skills array." }],
+            };
+        }
+
+        const updates: SkillUpdate[] = [];
+        const skipped: SkillCheckResult["skipped"] = [];
+        const failures: SkillCheckResult["failures"] = [];
+
+        await Promise.all(manifest.skills.map(async (entry, index) => {
+            const skill = entry && typeof entry === "object" ? entry as SkillManifestEntry : {};
+            const name = typeof skill.name === "string" && skill.name ? skill.name : `<skill #${index + 1}>`;
+            if (skill.enabled === false) {
+                skipped.push({ name, reason: "skill is disabled" });
+                return;
+            }
+            if (typeof skill.name !== "string" || !skill.name) {
+                skipped.push({ name, reason: "missing name" });
+                return;
+            }
+            if (typeof skill.source !== "string" || !skill.source) {
+                skipped.push({ name, reason: "missing source" });
+                return;
+            }
+            if (typeof skill.ref !== "string" || !skill.ref) {
+                skipped.push({ name, reason: "missing ref" });
+                return;
+            }
+            if (!versionPattern.test(skill.ref)) {
+                skipped.push({ name, reason: "ref is not version-like" });
+                return;
+            }
+
+            let result: Awaited<ReturnType<typeof pi.exec>>;
+            try {
+                result = await pi.exec("git", ["ls-remote", "--tags", "--refs", skill.source], {
+                    timeout: checkTimeoutMs,
+                });
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : String(error);
+                failures.push({ name, message: `Unable to check ${name}: ${reason}` });
+                return;
+            }
+
+            const tags = result.stdout.split("\n")
+                .map((line) => line.trim().split(/\s+/)[1]?.replace("refs/tags/", ""))
+                .filter((tag): tag is string => Boolean(tag && versionPattern.test(tag)))
+                .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+
+            if (result.code !== 0 || tags.length === 0) {
+                const detail = result.killed
+                    ? `timed out after ${checkTimeoutMs / 1_000} seconds`
+                    : result.stderr.trim();
+                failures.push({
+                    name,
+                    message: `Unable to find version tags for ${name}${detail ? `: ${detail}` : "."}`,
+                });
+                return;
+            }
+
+            const latestRef = tags.at(-1)!;
+            if (latestRef === skill.ref) return;
+
+            const update: SkillUpdate = {
+                name,
+                source: skill.source,
+                currentRef: skill.ref,
+                latestRef,
+            };
+            const githubMatch = skill.source.replace(/\.git$/, "").match(/^https:\/\/github\.com\/([^/]+\/[^/]+)$/);
+            if (githubMatch) {
+                const repository = `https://github.com/${githubMatch[1]}`;
+                update.diffURL = `${repository}/compare/${skill.ref}...${latestRef}`;
+                update.changelogURL = `${repository}/releases/tag/${latestRef}`;
+            }
+            updates.push(update);
+        }));
+
+        return { ok: failures.length === 0, manifestPath, updates, skipped, failures };
     }
 
     // Formats structured script failures into concise user-facing lines.
@@ -276,23 +372,17 @@ export default function (pi: ExtensionAPI) {
     // Startup uses this silently unless updates are available. Manual --check uses
     // `notifyWhenCurrent` so an up-to-date result is still visible to the user.
     async function checkSkillVersions(ctx: NotifyContext, notifyWhenCurrent = false) {
-        const result = await checkSkillUpdates();
+        const check = await checkSkillUpdates();
+        const formattedResult = formatCheckResult(check);
 
-        if (!result.check) {
-            if (ctx.hasUI) ctx.ui.notify("Skill version check returned invalid JSON", "warning");
-            return result.output;
-        }
-
-        const formattedResult = formatCheckResult(result.check);
-
-        if (result.code !== 0 || !result.check.ok) {
+        if (!check.ok) {
             if (ctx.hasUI) ctx.ui.notify("Skill version check failed", "warning");
-            return formattedResult || result.output;
+            return formattedResult;
         }
 
-        if (ctx.hasUI && result.check.updates.length > 0) {
+        if (ctx.hasUI && check.updates.length > 0) {
             ctx.ui.notify(
-                `Skill updates available: ${result.check.updates.length}. Run /update-skills --interactive.`,
+                `Skill updates available: ${check.updates.length}. Run /update-skills --interactive.`,
                 "info",
             );
             showOutput(
@@ -326,25 +416,19 @@ export default function (pi: ExtensionAPI) {
 
     // Orchestrates interactive update acceptance, pinning, and final skill sync.
     //
-    // The flow is intentionally script-driven: check JSON supplies candidate updates,
-    // the TUI selects a subset, pin JSON mutates manifest refs, and sync JSON reports
-    // final installed skill state.
+    // The extension check supplies candidate updates; the TUI selects a subset,
+    // then the sync script pins refs and reports the final installed skill state.
     async function runInteractiveUpdate(ctx: NotifyContext) {
-        const checkResult = await checkSkillUpdates();
+        const check = await checkSkillUpdates();
 
-        if (!checkResult.check) {
-            if (ctx.hasUI) ctx.ui.notify("Skill version check returned invalid JSON", "warning");
-            return checkResult.output;
-        }
-
-        if (checkResult.code !== 0 || !checkResult.check.ok) {
+        if (!check.ok) {
             if (ctx.hasUI) ctx.ui.notify("Skill version check failed", "warning");
-            return formatCheckResult(checkResult.check) || checkResult.output;
+            return formatCheckResult(check);
         }
 
-        const updates = checkResult.check.updates;
+        const updates = check.updates;
         if (updates.length === 0) {
-            return formatCheckResult(checkResult.check);
+            return formatCheckResult(check);
         }
 
         const acceptedUpdates = await chooseUpdates(ctx, updates);

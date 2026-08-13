@@ -37,7 +37,7 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 
 ### Skill upkeep
 
-- `extensions/skills/update-agent-skills.ts` checks pinned agent skills for newer tags at session start.
+- `extensions/skills/update-agent-skills.ts` reads the skills manifest and checks pinned agent skills for newer tags at session start; each remote check times out after 10 seconds.
 - `/update-skills --check` lists available updates.
 - `/update-skills --interactive` lets the user choose updates, pins accepted refs, and syncs skills.
 - `/update-skills` syncs skills through the shared shell scripts.
