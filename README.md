@@ -42,6 +42,15 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 - `/update-skills --interactive` lets the user choose updates, pins accepted refs, and syncs skills.
 - `/update-skills` syncs skills through the shared shell scripts.
 
+### Skill evaluation
+
+- `/skill-eval` validates, starts, monitors, pauses, resumes, cancels, reports, and deletes durable skill-evaluation runs. A run opens its command-center monitor by default; pass `-b` to leave it in the background. The monitor shows live controller/cell process telemetry and selectable raw stdout/stderr for active agents; retained evidence stays redacted. Direct forms are listed by `/skill-eval help`.
+- Milestone 1 runs isolated, headless Pi cells across no-skill, committed-baseline, and frozen-candidate arms; Codex, Claude Code, and the advisory supervisor remain deferred.
+- Private event-sourced run state and compact redacted evidence live under `~/.pi/agent/skill-evals/`. Only one top-level evaluation runs globally.
+- `skills/skill-eval-planner/` guides agents through creating reusable suites and release-specific comparisons; bundled templates and the authoring guide define the supported YAML.
+- See the practical [HTML user guide](docs/skill-evaluation-user-guide.html) for setup, authoring, commands, monitoring, verdicts, and troubleshooting.
+- See `docs/skill-evaluation-tool-design.md` for behavior, safety constraints, schemas, and milestone boundaries.
+
 ### UI helpers
 
 - `extensions/ui/dracula-status-line.ts` adds the Dracula/minimal status line with branch, model, token, cost, context, and extension status details.
@@ -52,6 +61,7 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 ### Productivity helpers
 
 - `extensions/productivity/current-pr.ts` adds `/pr` and the `get_current_branch_pr` tool for GitHub PR lookup via `gh`.
+- `extensions/productivity/jira-worktree.ts` adds `/jira-worktree <JIRA-KEY>`: it reads the story through authenticated `acli`, uses an isolated no-tools Pi agent to propose concise branch slugs, presents them in an `ask_user`-style chooser with custom input, then immediately creates a Supacode worktree and starts Pi there with a concise ticket brief.
 - `extensions/productivity/context.ts` adds `/context` status and `/context project config` for project-specific context-file and skill filtering, plus private project guidance injection.
 - See `docs/private-guidance.md` for configuring per-project `additional_guidance` files.
 - `extensions/productivity/todos.ts` adds `/todos`, the `todo` tool, and a session-scoped todo widget.
@@ -74,6 +84,7 @@ extensions/
   ui/              status line, response timing, ask_user UI tool
   productivity/    PR lookup, context filtering, local sharing, session helpers, todos, roadmap writer
 src/shared/        shared implementation helpers used by extensions
+skills/            agent workflows shipped by this package
 themes/            Pi themes shipped by this package
 docs/              design notes and user-facing docs
 ```

@@ -1,0 +1,143 @@
+schemaVersion: 1
+kind: skill-eval-suite
+
+name: skill-eval-planner-smoke
+
+skill:
+  name: skill-eval-planner
+  source:
+    type: git
+    repository: ../..
+  path: skills/skill-eval-planner
+
+defaults:
+  tools: [read, write]
+  permissions:
+    mode: workspace-write
+    network: false
+  limits:
+    scenarioTimeout: 5m
+    setupTimeout: 2m
+    checkTimeout: 1m
+
+profiles:
+  smoke:
+    repetitions: 1
+    maxConcurrency: 1
+    targets:
+      - harness: pi
+        model: openai-codex/gpt-5.6-sol
+        thinking: medium
+
+scenarios:
+  - id: author-release-comparison
+    title: Author a reusable suite and release comparison
+    covers: [suite-authoring, comparison-authoring, schema-boundaries]
+    purpose: >
+      Measure whether the planner produces runnable, correctly separated evaluation
+      assets from a small skill and release brief.
+    prompt: |
+      Create a reusable evaluation suite and a release-specific comparison for the
+      skill in skill-under-test/SKILL.md using release-notes.md as the update brief.
+
+      Write the suite to evals/release-note-summarizer/suite.yaml and the comparison
+      to evals/release-note-summarizer/comparisons/1.0.0-to-1.1.0.yaml. The evaluated
+      skill directory is skill-under-test. Use a local fixture rooted at the current
+      workspace and a smoke Pi profile targeting openai-codex/gpt-5.6-sol with medium
+      thinking. Use baseline ref v1.0.0, candidate ref v1.1.0, and exploratory
+      acceptance. Include focused positive and forbidden scenarios. Supporting fixture
+      files may be created under evals/release-note-summarizer. Do not run the evaluation.
+    fixture:
+      type: local
+      path: fixtures/release-planning
+    invocation: implicit
+    runOn: [control, candidate]
+    checks:
+      - id: suite-created
+        type: file-exists
+        severity: critical
+        path: evals/release-note-summarizer/suite.yaml
+        expect:
+          exists: true
+      - id: comparison-created
+        type: file-exists
+        severity: critical
+        path: evals/release-note-summarizer/comparisons/1.0.0-to-1.1.0.yaml
+        expect:
+          exists: true
+      - id: suite-has-reusable-coverage
+        type: file-contains
+        severity: critical
+        path: evals/release-note-summarizer/suite.yaml
+        expect:
+          contains:
+            - "kind: skill-eval-suite"
+            - "invocation: forbidden"
+          notContains:
+            - "ref: v1.0.0"
+            - "ref: v1.1.0"
+      - id: comparison-owns-release-data
+        type: file-contains
+        severity: critical
+        path: evals/release-note-summarizer/comparisons/1.0.0-to-1.1.0.yaml
+        expect:
+          contains:
+            - "kind: skill-eval-comparison"
+            - "ref: v1.0.0"
+            - "ref: v1.1.0"
+            - "mode: exploratory"
+      - id: generated-plans-have-runner-shape
+        type: command
+        severity: critical
+        command: |
+          node <<'NODE'
+          const { execFileSync } = require("node:child_process");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const globalRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+          const { parse } = require(path.join(globalRoot, "@earendil-works/pi-coding-agent/node_modules/yaml"));
+          const fail = message => { throw new Error(message); };
+          const need = (condition, message) => condition || fail(message);
+          const suiteFile = "evals/release-note-summarizer/suite.yaml";
+          const comparisonFile = "evals/release-note-summarizer/comparisons/1.0.0-to-1.1.0.yaml";
+          const suite = parse(fs.readFileSync(suiteFile, "utf8"));
+          const comparison = parse(fs.readFileSync(comparisonFile, "utf8"));
+          need(suite.schemaVersion === 1 && suite.kind === "skill-eval-suite", "invalid suite envelope");
+          need(suite.skill?.name === "release-note-summarizer", "invalid suite skill name");
+          need(suite.skill?.source?.type === "git" && typeof suite.skill.source.repository === "string", "invalid skill source");
+          const sourceRoot = path.resolve(path.dirname(suiteFile), suite.skill.source.repository);
+          const skillRoot = path.resolve(sourceRoot, suite.skill.path ?? "");
+          need(fs.statSync(skillRoot).isDirectory() && fs.existsSync(path.join(skillRoot, "SKILL.md")), "skill.path must resolve to the skill directory");
+          const smoke = suite.profiles?.smoke;
+          need(smoke?.repetitions === 1 && smoke?.targets?.some(target => target.harness === "pi" && target.model === "openai-codex/gpt-5.6-sol" && target.thinking === "medium"), "invalid smoke profile");
+          need(Array.isArray(suite.scenarios) && suite.scenarios.length >= 2, "suite needs focused reusable scenarios");
+          const scenarioIds = new Set(suite.scenarios.map(scenario => scenario.id));
+          need(suite.scenarios.some(scenario => scenario.invocation === "forbidden"), "suite needs forbidden coverage");
+          need(suite.scenarios.some(scenario => ["explicit", "implicit", "contextual"].includes(scenario.invocation)), "suite needs positive coverage");
+          for (const scenario of suite.scenarios) {
+            need(typeof scenario.id === "string" && typeof scenario.title === "string" && Array.isArray(scenario.covers), `invalid scenario identity: ${scenario.id}`);
+            need(typeof scenario.purpose === "string" && Boolean(scenario.prompt) !== Boolean(scenario.promptFile), `invalid scenario prompt: ${scenario.id}`);
+            need(scenario.fixture?.type === "local" && typeof scenario.fixture.path === "string", `invalid local fixture: ${scenario.id}`);
+            need(fs.existsSync(path.resolve(path.dirname(suiteFile), scenario.fixture.path)), `fixture does not resolve: ${scenario.id}`);
+            need(Array.isArray(scenario.runOn) && scenario.runOn.length > 0, `missing arms: ${scenario.id}`);
+            need(Array.isArray(scenario.checks) && scenario.checks.length > 0 && scenario.checks.every(check => ["critical", "advisory"].includes(check.severity)), `invalid checks: ${scenario.id}`);
+          }
+          need(comparison.schemaVersion === 1 && comparison.kind === "skill-eval-comparison", "invalid comparison envelope");
+          need(path.resolve(path.dirname(comparisonFile), comparison.suite ?? "") === path.resolve(suiteFile), "comparison suite path does not resolve");
+          need(comparison.arms?.control?.skill === "disabled" && comparison.arms?.baseline?.ref === "v1.0.0" && comparison.arms?.candidate?.ref === "v1.1.0", "invalid comparison arms");
+          need(Array.isArray(comparison.hypotheses) && comparison.hypotheses.length > 0, "comparison needs hypotheses");
+          need(comparison.hypotheses.every(hypothesis => typeof hypothesis.expectedChange === "string" && Array.isArray(hypothesis.mustNotRegress) && hypothesis.mustNotRegress.length > 0 && hypothesis.scenarios.every(id => scenarioIds.has(id))), "invalid hypothesis mapping");
+          const selected = comparison.execution?.scenarios?.include;
+          need(comparison.execution?.profile === "smoke" && (comparison.execution.scenarios?.all === true || (Array.isArray(selected) && selected.length > 0 && selected.every(id => scenarioIds.has(id)))), "invalid execution selection");
+          need(comparison.acceptance?.mode === "exploratory" && comparison.acceptance.rules === undefined, "invalid exploratory acceptance");
+          NODE
+        expect:
+          exitCode: 0
+      - id: changes-stay-in-evals
+        type: git-diff
+        severity: critical
+        expect:
+          allowedPaths: ["evals/**"]
+          requiredPaths:
+            - evals/release-note-summarizer/suite.yaml
+            - evals/release-note-summarizer/comparisons/1.0.0-to-1.1.0.yaml

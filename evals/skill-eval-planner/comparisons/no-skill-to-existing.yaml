@@ -1,0 +1,41 @@
+schemaVersion: 1
+kind: skill-eval-comparison
+
+name: skill-eval-planner-no-skill-to-existing
+suite: ../suite.yaml
+
+arms:
+  control:
+    skill: disabled
+  baseline:
+    ref: 8dcf59eb6d1823e31ac8125ef397b889eaab8085
+  candidate:
+    snapshot:
+      path: ../../../skills/skill-eval-planner
+
+change:
+  summary: >
+    Measure the existing skill-eval-planner skill's lift over a no-skill control
+    when authoring a reusable suite and release comparison.
+
+hypotheses:
+  - id: existing-skill-improves-plan-authoring
+    expectedChange: >
+      The existing skill produces both required files with suite-owned reusable
+      scenarios separated from comparison-owned release refs and acceptance.
+    mustNotRegress:
+      - The agent does not run an evaluation.
+      - Changes remain limited to the requested eval files.
+    scenarios: [author-release-comparison]
+
+nonGoals:
+  - Compare two different skill-eval-planner releases.
+  - Grade qualitative writing style.
+
+execution:
+  profile: smoke
+  scenarios:
+    include: [author-release-comparison]
+
+acceptance:
+  mode: exploratory

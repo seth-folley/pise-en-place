@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A practical guide to authoring, running, monitoring, and interpreting durable Pi skill evaluations.">
+  <title>Skill Evaluation Runner — User Guide</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f1ea;
+      --surface: #fffdf8;
+      --surface-2: #eee9df;
+      --surface-3: #e6e0d5;
+      --text: #25231f;
+      --muted: #68635a;
+      --border: #d7d0c3;
+      --accent: #6254c7;
+      --accent-2: #493ca6;
+      --accent-soft: #e9e5ff;
+      --good: #21765b;
+      --good-soft: #dff4e8;
+      --warn: #9a5b16;
+      --warn-soft: #fff0d5;
+      --bad: #a23f43;
+      --bad-soft: #fde4e3;
+      --code: #211f27;
+      --code-text: #f2eef9;
+      --shadow: 0 18px 55px rgba(50, 43, 32, 0.09);
+      --radius: 18px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #171714;
+        --surface: #22211d;
+        --surface-2: #2c2a25;
+        --surface-3: #37342e;
+        --text: #f4f0e7;
+        --muted: #bbb4a8;
+        --border: #454139;
+        --accent: #afa4ff;
+        --accent-2: #c4bcff;
+        --accent-soft: #39345a;
+        --good: #83d4b6;
+        --good-soft: #203f35;
+        --warn: #f2bd77;
+        --warn-soft: #4b3821;
+        --bad: #ff9c9f;
+        --bad-soft: #502a2d;
+        --code: #111014;
+        --code-text: #f2eef9;
+        --shadow: 0 18px 55px rgba(0, 0, 0, 0.25);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 10% 0%, var(--accent-soft), transparent 29rem),
+        radial-gradient(circle at 95% 25%, var(--warn-soft), transparent 24rem),
+        var(--bg);
+      color: var(--text);
+      font: 16px/1.62 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--accent-2); text-underline-offset: 0.18em; }
+    a:hover { text-decoration-thickness: 2px; }
+    code, pre, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    code:not(pre code) {
+      padding: 0.12em 0.38em;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface-2);
+      font-size: 0.88em;
+    }
+    h1, h2, h3, h4 { line-height: 1.15; letter-spacing: -0.025em; }
+    h1 { max-width: 850px; margin: 12px 0 18px; font-size: clamp(2.65rem, 7vw, 5rem); }
+    h2 { margin: 0 0 12px; font-size: clamp(1.7rem, 3.2vw, 2.45rem); }
+    h3 { margin: 0 0 8px; font-size: 1.16rem; }
+    h4 { margin: 0 0 6px; font-size: 1rem; }
+    p { margin: 0 0 16px; }
+    ul, ol { margin: 10px 0 0; padding-left: 1.35rem; }
+    li + li { margin-top: 7px; }
+
+    .page {
+      display: grid;
+      grid-template-columns: 215px minmax(0, 1fr);
+      gap: 32px;
+      width: min(1280px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 40px 0 96px;
+    }
+    .side-nav {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+      max-height: calc(100vh - 48px);
+      overflow: auto;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      box-shadow: var(--shadow);
+    }
+    .side-nav strong { display: block; margin-bottom: 12px; font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase; }
+    .side-nav a {
+      display: block;
+      padding: 7px 9px;
+      border-radius: 8px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+    .side-nav a:hover { background: var(--accent-soft); color: var(--text); }
+    main { min-width: 0; }
+    .hero { padding: 34px 12px 46px; }
+    .eyebrow { color: var(--accent); font-size: 0.78rem; font-weight: 850; letter-spacing: 0.14em; text-transform: uppercase; }
+    .lede { max-width: 820px; color: var(--muted); font-size: clamp(1.12rem, 2vw, 1.35rem); }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 25px; }
+    .button {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 750;
+    }
+    .button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+
+    section {
+      margin-top: 28px;
+      padding: clamp(24px, 5vw, 46px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .section-intro { max-width: 760px; color: var(--muted); }
+    .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 26px; }
+    .card { padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
+    .card p { color: var(--muted); font-size: 0.94rem; }
+    .card p:last-child { margin-bottom: 0; }
+    .icon {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      margin-bottom: 14px;
+      place-items: center;
+      border-radius: 10px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 900;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent-2);
+      font-size: 0.76rem;
+      font-weight: 850;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .badge.good { background: var(--good-soft); color: var(--good); }
+    .badge.warn { background: var(--warn-soft); color: var(--warn); }
+    .badge.bad { background: var(--bad-soft); color: var(--bad); }
+
+    .quick-path { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 28px; margin-top: 28px; }
+    .step { position: relative; padding: 18px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-2); }
+    .step:not(:last-child)::after { content: "→"; position: absolute; top: 45%; right: -25px; color: var(--accent); font-size: 1.5rem; font-weight: 900; }
+    .step-number { display: grid; width: 30px; height: 30px; margin-bottom: 13px; place-items: center; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 850; }
+    .step p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+
+    .command-list { display: grid; gap: 9px; margin-top: 24px; }
+    .command-row { display: grid; grid-template-columns: minmax(280px, 0.85fr) 1fr; gap: 16px; align-items: baseline; padding: 13px 15px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+    .command-row code { border: 0; background: transparent; color: var(--accent-2); font-weight: 750; }
+    .command-row span { color: var(--muted); font-size: 0.92rem; }
+
+    .note { margin-top: 22px; padding: 17px 19px; border: 1px solid var(--border); border-left: 5px solid var(--accent); border-radius: 12px; background: var(--accent-soft); }
+    .note.warning { border-left-color: var(--warn); background: var(--warn-soft); }
+    .note.danger { border-left-color: var(--bad); background: var(--bad-soft); }
+    .note strong { display: block; margin-bottom: 4px; }
+    .note p:last-child { margin: 0; }
+
+    .code-block { position: relative; margin: 20px 0 0; overflow: hidden; border-radius: 14px; background: var(--code); color: var(--code-text); }
+    .code-label { padding: 9px 15px; border-bottom: 1px solid #403c49; color: #bcb4cd; font-size: 0.76rem; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+    pre { margin: 0; overflow-x: auto; padding: 18px; font-size: 0.86rem; line-height: 1.55; tab-size: 2; }
+    pre .comment { color: #9aa0a6; }
+    pre .key { color: #c6b8ff; }
+    pre .value { color: #9bddc5; }
+
+    .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 26px; }
+    .file-card { padding: 24px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
+    .file-card ul { color: var(--muted); }
+    .file-name { display: inline-block; margin-bottom: 12px; color: var(--accent-2); font: 750 0.9rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    .arms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 26px; }
+    .arm { padding: 22px; border: 1px solid var(--border); border-top: 5px solid var(--muted); border-radius: 14px; background: var(--surface-2); }
+    .arm.control { border-top-color: var(--warn); }
+    .arm.candidate { border-top-color: var(--accent); }
+    .arm p { color: var(--muted); }
+    .comparison-line { margin-top: 16px; padding: 15px; border-radius: 11px; background: var(--accent-soft); text-align: center; font-weight: 750; }
+
+    .approval { display: grid; grid-template-columns: 0.85fr 1.15fr; gap: 22px; margin-top: 26px; }
+    .checklist { margin: 0; padding: 0; list-style: none; }
+    .checklist li { position: relative; padding: 10px 10px 10px 33px; border-bottom: 1px solid var(--border); }
+    .checklist li::before { content: "✓"; position: absolute; left: 8px; color: var(--good); font-weight: 900; }
+    .checklist li + li { margin-top: 0; }
+    .approval-screen { padding: 18px; border-radius: 14px; background: var(--code); color: var(--code-text); font: 0.82rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .approval-screen strong { color: #c6b8ff; }
+
+    .terminal { margin-top: 26px; overflow: hidden; border: 1px solid #45404e; border-radius: 15px; background: #121116; color: #ebe7f2; box-shadow: 0 20px 45px rgba(0, 0, 0, 0.2); }
+    .terminal-bar { display: flex; gap: 7px; padding: 11px 14px; background: #24212a; }
+    .terminal-bar i { width: 10px; height: 10px; border-radius: 50%; background: #ff6b67; }
+    .terminal-bar i:nth-child(2) { background: #f5c451; }
+    .terminal-bar i:nth-child(3) { background: #63c174; }
+    .terminal-body { padding: 20px; overflow-x: auto; font: 0.82rem/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+    .terminal-accent { color: #b8adff; }
+    .terminal-dim { color: #8e8998; }
+    .terminal-good { color: #8ed5b9; }
+
+    table { width: 100%; margin-top: 22px; border-collapse: collapse; font-size: 0.93rem; }
+    th, td { padding: 12px 13px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 0.78rem; letter-spacing: 0.07em; text-transform: uppercase; }
+    td:first-child { font-weight: 750; }
+    kbd { display: inline-block; min-width: 26px; padding: 2px 6px; border: 1px solid var(--border); border-bottom-width: 3px; border-radius: 6px; background: var(--surface-2); text-align: center; font-size: 0.82rem; }
+
+    .verdict-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; margin-top: 24px; }
+    .verdict { padding: 17px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+    .verdict p { margin: 8px 0 0; color: var(--muted); font-size: 0.88rem; }
+
+    .storage-tree { margin-top: 22px; padding: 20px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-2); font: 0.88rem/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-x: auto; }
+    details { margin-top: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+    summary { cursor: pointer; padding: 16px 18px; font-weight: 780; }
+    details > div { padding: 0 18px 18px; color: var(--muted); }
+    details code { color: var(--text); }
+    footer { padding: 36px 12px 0; color: var(--muted); font-size: 0.9rem; }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; }
+
+    @media (max-width: 980px) {
+      .page { grid-template-columns: 1fr; }
+      .side-nav { position: static; display: flex; flex-wrap: wrap; gap: 4px; max-height: none; }
+      .side-nav strong { width: 100%; margin-bottom: 5px; }
+      .side-nav a { padding: 5px 8px; }
+      .quick-path { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+      .step:not(:last-child)::after { display: none; }
+      .cards, .arms { grid-template-columns: 1fr; }
+      .approval { grid-template-columns: 1fr; }
+      .verdict-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 680px) {
+      .page { width: min(100% - 20px, 1280px); padding-top: 14px; }
+      .hero { padding-inline: 4px; }
+      section { padding: 22px 18px; }
+      .quick-path, .two-col, .verdict-grid { grid-template-columns: 1fr; }
+      .command-row { grid-template-columns: 1fr; gap: 4px; }
+      .command-row code { white-space: nowrap; overflow-x: auto; }
+      table { display: block; overflow-x: auto; }
+    }
+    @media print {
+      :root { color-scheme: light; }
+      body { background: #fff; }
+      .page { display: block; width: 100%; padding: 0; }
+      .side-nav, .hero-actions { display: none; }
+      section { break-inside: avoid; box-shadow: none; }
+      a { color: inherit; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <nav class="side-nav" aria-label="Guide sections">
+      <strong>On this page</strong>
+      <a href="#start">Quick start</a>
+      <a href="#prerequisites">Prerequisites</a>
+      <a href="#author">Author the evaluation</a>
+      <a href="#validate">Validate and approve</a>
+      <a href="#run">Run and control</a>
+      <a href="#monitor">Monitor dashboard</a>
+      <a href="#results">Read the results</a>
+      <a href="#privacy">Privacy and storage</a>
+      <a href="#troubleshooting">Troubleshooting</a>
+      <a href="#reference">Command reference</a>
+    </nav>
+
+    <main>
+      <header class="hero">
+        <div class="eyebrow">Pi skill evaluation · milestone 1</div>
+        <h1>Run a fair, durable test of a skill update.</h1>
+        <p class="lede">Compare no skill, a committed baseline, and a frozen candidate against the same tasks. Pi prepares the experiment, runs it in the background, grades deterministic evidence, and keeps an auditable private report.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#start">Start the 10-minute setup</a>
+          <a class="button" href="#reference">See every command</a>
+          <a class="button" href="skill-evaluation-tool-design.md">Read the technical design</a>
+        </div>
+      </header>
+
+      <section id="start" aria-labelledby="start-heading">
+        <div class="eyebrow">Quick start</div>
+        <h2 id="start-heading">The whole workflow at a glance</h2>
+        <p class="section-intro">The authored files are reusable; the run itself is immutable. Validation and final approval happen before any trusted setup script or evaluated model cell executes.</p>
+        <div class="quick-path">
+          <article class="step"><div class="step-number">1</div><h3>Author</h3><p>Create a suite and a comparison.</p></article>
+          <article class="step"><div class="step-number">2</div><h3>Validate</h3><p>Resolve refs, freeze inputs, and inspect warnings.</p></article>
+          <article class="step"><div class="step-number">3</div><h3>Approve</h3><p>Review the exact matrix, permissions, setup, and cost policy.</p></article>
+          <article class="step"><div class="step-number">4</div><h3>Monitor</h3><p>Let the detached run continue—even after Pi exits.</p></article>
+          <article class="step"><div class="step-number">5</div><h3>Decide</h3><p>Read deterministic gates, failures, and provenance.</p></article>
+        </div>
+        <div class="code-block">
+          <div class="code-label">Pi</div>
+          <pre><code>/skill-eval validate evals/my-skill/comparisons/main-to-local.yaml
+/skill-eval run evals/my-skill/comparisons/main-to-local.yaml
+# The monitor opens immediately; use -b to leave the run in the background.
+/skill-eval run evals/my-skill/comparisons/main-to-local.yaml -b
+/skill-eval monitor
+/skill-eval report</code></pre>
+        </div>
+        <div class="note">
+          <strong>You can also start from the picker.</strong>
+          <p>Run <code>/skill-eval</code> with no arguments to choose Run, Validate, Monitor, Status, or Report interactively.</p>
+        </div>
+      </section>
+
+      <section id="prerequisites" aria-labelledby="prerequisites-heading">
+        <div class="eyebrow">Before you begin</div>
+        <h2 id="prerequisites-heading">What you need</h2>
+        <div class="cards">
+          <article class="card"><div class="icon">π</div><h3>The package loaded in Pi</h3><p>Install this repository with <code>pi install .</code>, or use <code>pi install -l .</code> for project-only use. Run <code>/reload</code> after extension changes.</p></article>
+          <article class="card"><div class="icon">◇</div><h3>An exact Pi model</h3><p>The selected profile must name an available <code>provider/model</code> and explicit thinking level. Provider credentials must already work in Pi.</p></article>
+          <article class="card"><div class="icon">⌁</div><h3>Reproducible inputs</h3><p>You need a Git-backed skill source, a committed baseline ref, a local or committed candidate, and local or immutable Git fixtures.</p></article>
+        </div>
+        <div class="note warning">
+          <strong>Start with a small smoke profile.</strong>
+          <p>Use one representative model, one repetition, and a few critical scenarios. Expand the matrix only after the suite proves useful.</p>
+        </div>
+      </section>
+
+      <section id="author" aria-labelledby="author-heading">
+        <div class="eyebrow">Step 1 · Author</div>
+        <h2 id="author-heading">Separate the reusable test from this release</h2>
+        <p class="section-intro">A suite describes how the skill is tested over time. A comparison describes the baseline, candidate, hypotheses, selected scenarios, and release gates for one change.</p>
+        <div class="two-col">
+          <article class="file-card">
+            <span class="file-name">suite.yaml</span>
+            <h3>Reusable evaluation contract</h3>
+            <ul>
+              <li>Skill source and path</li>
+              <li>Profiles, models, thinking, and repetition</li>
+              <li>Scenarios, prompts, fixtures, tools, and permissions</li>
+              <li>Deterministic checks and qualitative rubrics</li>
+            </ul>
+          </article>
+          <article class="file-card">
+            <span class="file-name">comparisons/*.yaml</span>
+            <h3>One proposed update</h3>
+            <ul>
+              <li>Committed baseline and frozen candidate</li>
+              <li>Change summary and hypotheses</li>
+              <li>Explicit scenario and profile selection</li>
+              <li>Exploratory or gated acceptance policy</li>
+            </ul>
+          </article>
+        </div>
+        <div class="code-block">
+          <div class="code-label">Recommended layout</div>
+          <pre><code>evals/
+└── my-skill/
+    ├── suite.yaml
+    ├── prompts/
+    ├── fixtures/
+    │   └── focused-project/
+    └── comparisons/
+        └── main-to-local.yaml</code></pre>
+        </div>
+        <p style="margin-top: 20px;">Start from the bundled <a href="../skills/skill-eval-planner/templates/suite.yaml">suite template</a> and <a href="../skills/skill-eval-planner/templates/comparison.yaml">comparison template</a>. For schema details and scenario-design advice, use the <a href="../skills/skill-eval-planner/references/authoring-guide.md">authoring guide</a> or ask Pi to use the <code>skill-eval-planner</code> skill.</p>
+
+        <h3 style="margin-top: 30px;">Understand the three arms</h3>
+        <div class="arms">
+          <article class="arm control"><span class="badge warn">Control</span><h3 style="margin-top: 12px;">No evaluated skill</h3><p>Shows what the model can do without the skill. This keeps an easy task from looking like skill improvement.</p></article>
+          <article class="arm"><span class="badge">Baseline</span><h3 style="margin-top: 12px;">Committed trusted ref</h3><p>Measures the current skill. The ref is resolved and frozen before approval.</p></article>
+          <article class="arm candidate"><span class="badge good">Candidate</span><h3 style="margin-top: 12px;">Local snapshot or ref</h3><p>Measures the proposed update. Local files are copied, hashed, and frozen before approval.</p></article>
+        </div>
+        <div class="comparison-line">Baseline − Control = current skill lift &nbsp; · &nbsp; Candidate − Baseline = update gain &nbsp; · &nbsp; Candidate − Control = candidate skill lift</div>
+
+        <h3 style="margin-top: 30px;">Choose acceptance deliberately</h3>
+        <div class="two-col">
+          <article class="card"><span class="badge">Exploratory</span><h3 style="margin-top: 12px;">Gather evidence first</h3><p>A complete run ends with an <strong>informational</strong> verdict. Use this while learning reasonable thresholds.</p></article>
+          <article class="card"><span class="badge good">Gated</span><h3 style="margin-top: 12px;">Apply release rules</h3><p>Typed deterministic rules produce <strong>pass</strong>, <strong>fail</strong>, or <strong>incomplete</strong>. Do not invent thresholds merely to make the file runnable.</p></article>
+        </div>
+      </section>
+
+      <section id="validate" aria-labelledby="validate-heading">
+        <div class="eyebrow">Steps 2–3 · Validate and approve</div>
+        <h2 id="validate-heading">Inspect the resolved experiment before spending</h2>
+        <p class="section-intro"><code>validate</code> parses both files strictly, resolves refs, freezes skill inputs, materializes each disposable fixture, runs its trusted setup, then validates and freezes the prepared fixture. It verifies the selected Pi model, computes the candidate diff, and expands the exact cell matrix. It does not start evaluated cells.</p>
+        <p>Pi reports fixture-preparation phases while validation runs. Successful validation diagnostics are discarded; a failed preparation preserves its redacted setup log, structured phase timeline, and failure summary under <code>~/.pi/agent/skill-evals/diagnostics/</code>.</p>
+        <div class="code-block">
+          <div class="code-label">Validate without running</div>
+          <pre><code>/skill-eval validate evals/my-skill/comparisons/main-to-local.yaml
+
+<span class="comment"># Explicitly test another profile without changing the comparison:</span>
+/skill-eval validate evals/my-skill/comparisons/main-to-local.yaml --profile smoke</code></pre>
+        </div>
+        <div class="approval">
+          <div>
+            <h3>Before approving a run, verify:</h3>
+            <ul class="checklist">
+              <li>The baseline ref is the trusted version you intended.</li>
+              <li>The candidate digest represents the intended local snapshot or ref.</li>
+              <li>The selected scenarios and total cells are affordable.</li>
+              <li>The exact provider, model, thinking, and repetition are correct.</li>
+              <li>Agent tools, write mode, and network permission are appropriate.</li>
+              <li>Every trusted setup command and its network permission are expected.</li>
+              <li>Best-effort isolation is acceptable for these fixtures.</li>
+            </ul>
+          </div>
+          <div class="approval-screen" aria-label="Example approval preview"><strong>Start detached skill evaluation?</strong>
+
+Comparison: my-skill-main-to-local
+Profile: smoke
+Matrix: 3 scenarios · 3 blocks · 9 cells
+Concurrency: 1 · Max cost: none
+Isolation: best-effort
+Baseline: abc123…
+Candidate: def456…
+
+Scenario permissions and trusted setup:
+  focused-edit: workspace-write
+  tools=read,bash,edit,write
+  agent-network=false
+  setup=npm ci
+  setup-network=true
+
+[ Confirm ]   [ Cancel ]</div>
+        </div>
+        <div class="note warning">
+          <strong>Setup is trusted host code.</strong>
+          <p>It runs once per scenario after approval, may inherit your host environment, and receives network only when the suite explicitly sets <code>network: true</code>. Evaluated agents use a separate sanitized environment and do not receive setup credentials.</p>
+        </div>
+      </section>
+
+      <section id="run" aria-labelledby="run-heading">
+        <div class="eyebrow">Step 4 · Run and control</div>
+        <h2 id="run-heading">The controller keeps working after Pi exits</h2>
+        <p class="section-intro">After approval, Pi starts a detached controller and returns immediately. Only one top-level evaluation can run globally. Another Pi session can reconnect by run ID—or omit the ID to use the active or latest run.</p>
+        <div class="command-list">
+          <div class="command-row"><code>/skill-eval status [run-id]</code><span>Show lifecycle, verdict, controller health, progress, cost, failures, isolation, and run directory.</span></div>
+          <div class="command-row"><code>/skill-eval pause [run-id]</code><span>Stop dispatching new cells. Active cells finish before the run reaches <code>paused</code>.</span></div>
+          <div class="command-row"><code>/skill-eval resume [run-id]</code><span>Continue a paused or pause-requested run.</span></div>
+          <div class="command-row"><code>/skill-eval cancel [run-id]</code><span>Confirm immediate, irreversible cancellation. Active model processes are terminated.</span></div>
+        </div>
+        <div class="note">
+          <strong>Failures do not stop the matrix.</strong>
+          <p>The controller records deterministic failures and continues collecting evidence. Provider and infrastructure errors are not retried automatically.</p>
+        </div>
+        <div class="note danger">
+          <strong>Closing the dashboard is not cancellation.</strong>
+          <p><kbd>q</kbd>, <kbd>Esc</kbd>, or <kbd>Ctrl</kbd>+<kbd>C</kbd> closes monitoring only. Use <code>cancel</code> or press <kbd>c</kbd> and confirm inside the monitor to stop the run.</p>
+        </div>
+      </section>
+
+      <section id="monitor" aria-labelledby="monitor-heading">
+        <div class="eyebrow">Live dashboard</div>
+        <h2 id="monitor-heading">Watch progress without spending another model call</h2>
+        <p class="section-intro"><code>/skill-eval monitor [run-id]</code> opens a model-free command center that polls state and live local process telemetry about once per second. It shows the controller and evaluated-agent process tree; select an active agent for its real stdout/stderr while the monitor is open.</p>
+        <div class="terminal" aria-label="Illustration of the skill evaluation monitor">
+          <div class="terminal-bar"><i></i><i></i><i></i></div>
+          <div class="terminal-body"><span class="terminal-accent">Skill Eval · my-skill-20250820-135902-a1b2c3d4</span>
+<span class="terminal-accent">[Overview]</span>  Processes  Matrix  Findings  Events
+
+Lifecycle: running   Verdict: pending   Controller: live
+Progress: ████████████░░░░░░░░ 60%
+Blocks 3/5 · Cells 9/15 · Cost $0.1842 · Isolation best-effort
+Elapsed 4m 18s · Active block: focused-edit-pi-1 · Pending controls: 0
+
+Active agents (2)
+<span class="terminal-dim">↑↓ select · Enter opens live raw stdout/stderr</span>
+&gt; <span class="terminal-accent">candidate · focused-edit</span> · pi:anthropic/claude-sonnet-4:high · 42s · $0.0312
+    assistant · I found the isolation issue. I’m updating the focused call site now.
+  <span class="terminal-accent">baseline · focused-edit</span> · pi:anthropic/claude-sonnet-4:high · 38s · $0.0279
+    tool → read · {"path":"Sources/Feature/Worker.swift"}
+
+Recent failures
+<span class="terminal-good">None</span>
+
+<span class="terminal-dim">tab views · ↑↓ select · enter details · p pause/resume · c cancel · r refresh · q close</span></div>
+        </div>
+        <table aria-label="Monitor keyboard controls">
+          <thead><tr><th>Key</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Move among Overview, Processes, Matrix, Findings, and Events.</td></tr>
+            <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Select a paired block in the matrix.</td></tr>
+            <tr><td><kbd>Enter</kbd></td><td>Open the selected active agent from Overview, or the selected block’s relevant cell from Matrix.</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>Return from details, return to Overview, then close.</td></tr>
+            <tr><td><kbd>p</kbd></td><td>Request pause or resume, depending on lifecycle.</td></tr>
+            <tr><td><kbd>c</kbd></td><td>Start inline cancellation confirmation; press <kbd>y</kbd> to confirm.</td></tr>
+            <tr><td><kbd>r</kbd></td><td>Refresh state immediately.</td></tr>
+            <tr><td><kbd>?</kbd></td><td>Show or hide monitor help.</td></tr>
+            <tr><td><kbd>q</kbd> / <kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Close monitoring without changing the run.</td></tr>
+          </tbody>
+        </table>
+        <div class="cards">
+          <article class="card"><h3>Overview</h3><p>Run metadata plus a selectable live summary of every active agent’s latest assistant or tool activity.</p></article>
+          <article class="card"><h3>Processes</h3><p>The controller and evaluated-agent process tree, with PID, parent PID, CPU, RSS, elapsed time, and command.</p></article>
+          <article class="card"><h3>Live agent detail</h3><p>Real stdout/stderr received after the monitor connects, with continuously updated elapsed time, tokens, cost, status, and last tool. Raw output is memory-only; completed cells retain the redacted timeline instead.</p></article>
+          <article class="card"><h3>Matrix</h3><p>Adjacent control, baseline, and candidate status for every seeded paired block.</p></article>
+          <article class="card"><h3>Findings</h3><p>Non-passing deterministic checks and acceptance-rule status.</p></article>
+          <article class="card"><h3>Events</h3><p>The latest lifecycle events without prompt, response, or tool-argument bodies.</p></article>
+        </div>
+      </section>
+
+      <section id="results" aria-labelledby="results-heading">
+        <div class="eyebrow">Step 5 · Interpret</div>
+        <h2 id="results-heading">Read lifecycle, evidence, and verdict separately</h2>
+        <p class="section-intro">A controller can finish cleanly while a candidate fails its gates. Conversely, an interrupted run may preserve enough evidence to prove a failure while still being incomplete overall.</p>
+        <div class="verdict-grid">
+          <article class="verdict"><span class="badge good">Pass</span><p>All required evidence exists and every gated acceptance rule passed.</p></article>
+          <article class="verdict"><span class="badge bad">Fail</span><p>At least one deterministic gate definitively failed.</p></article>
+          <article class="verdict"><span class="badge warn">Incomplete</span><p>Required evidence is missing and no stronger definitive failure decides the result.</p></article>
+          <article class="verdict"><span class="badge">Informational</span><p>An exploratory run completed; no release gates were configured.</p></article>
+        </div>
+        <table aria-label="Cell and check interpretation">
+          <thead><tr><th>Result</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td>Cell passed</td><td>The harness completed and all critical deterministic checks passed. Advisory checks may still have failed.</td></tr>
+            <tr><td>Cell failed</td><td>At least one critical deterministic check failed.</td></tr>
+            <tr><td>Cell errored</td><td>The harness, provider, timeout, or grading infrastructure failed; this is missing behavioral evidence, not a retry.</td></tr>
+            <tr><td>Not run / cancelled</td><td>The cell was never completed because of budget exhaustion, cancellation, or interruption.</td></tr>
+            <tr><td>Critical check</td><td>Contributes to cell pass/fail and may decide gated acceptance.</td></tr>
+            <tr><td>Advisory check</td><td>Appears as a finding but does not by itself fail the cell.</td></tr>
+          </tbody>
+        </table>
+        <div class="command-list">
+          <div class="command-row"><code>/skill-eval report [run-id]</code><span>Display the completed Markdown report in Pi.</span></div>
+          <div class="command-row"><code>/skill-eval monitor [run-id]</code><span>Reopen a terminal run and inspect its matrix, findings, events, and redacted cell traces.</span></div>
+          <div class="command-row"><code>/skill-eval delete &lt;run-id&gt;</code><span>Permanently remove a terminal run and its audit bundle after confirmation.</span></div>
+        </div>
+        <div class="note warning">
+          <strong>Review the evidence, not only the headline.</strong>
+          <p>Check candidate failures, baseline-to-candidate regressions, no-skill lift, errors, warnings, costs, and the frozen provenance. Qualitative rubrics are retained but ungraded in milestone 1.</p>
+        </div>
+      </section>
+
+      <section id="privacy" aria-labelledby="privacy-heading">
+        <div class="eyebrow">Private by default</div>
+        <h2 id="privacy-heading">Know what is retained</h2>
+        <p class="section-intro">Authoritative runtime data is global and outside evaluated repositories. Runs remain until you explicitly delete them; disposable workspaces and prepared dependency archives are removed at finalization.</p>
+        <div class="storage-tree" aria-label="Skill evaluation storage structure">~/.pi/agent/skill-evals/
+├── registry.json
+└── runs/&lt;run-id&gt;/
+    ├── events.jsonl          authoritative lifecycle ledger
+    ├── state.json            atomic current-state projection
+    ├── controller.json       PID, version, and heartbeat
+    ├── resolved-plan.json    immutable expanded matrix
+    ├── report.md             human-readable result
+    ├── report.json           machine-readable result
+    ├── control/              atomic pause/resume/cancel requests
+    └── artifacts/            frozen inputs, manifests, diffs,
+                              check logs, and redacted traces</div>
+        <div class="two-col">
+          <article class="card"><span class="badge good">Retained</span><h3 style="margin-top: 12px;">Compact audit evidence</h3><p>Frozen skill inputs, fixture provenance, setup definition/logs, manifests, generated diffs, deterministic results, reports, and bounded redacted traces.</p></article>
+          <article class="card"><span class="badge warn">Removed</span><h3 style="margin-top: 12px;">Disposable execution state</h3><p>Per-cell workspaces, isolated grading copies, post-agent archives, and prepared fixture archives containing installed dependency trees.</p></article>
+        </div>
+        <div class="note danger">
+          <strong>Redacted does not mean safe to publish blindly.</strong>
+          <p>Artifacts are private and may contain model output, source diffs, fixture content, or values the redactor cannot recognize. Review every file before sharing it.</p>
+        </div>
+        <div class="note warning">
+          <strong>Isolation is best-effort in milestone 1.</strong>
+          <p>Ambient Pi skills, extensions, templates, and host context are disabled; tools and paths are guarded; pushes and known dangerous or network commands are blocked. This is not a complete operating-system sandbox.</p>
+        </div>
+      </section>
+
+      <section id="troubleshooting" aria-labelledby="troubleshooting-heading">
+        <div class="eyebrow">Troubleshooting</div>
+        <h2 id="troubleshooting-heading">Common recovery paths</h2>
+        <details open>
+          <summary>Validation reports several YAML errors</summary>
+          <div><p>The parser is intentionally strict and reports unknown fields, missing required fields, duplicate IDs, unsupported tools or checks, invalid profile targets, and comparison-to-suite mismatches together. Correct the authored files rather than expecting unsupported fields to be ignored.</p></div>
+        </details>
+        <details>
+          <summary>The selected model or thinking level is unavailable</summary>
+          <div><p>Use an exact Pi <code>provider/model</code> visible to the installed Pi version and an explicitly supported thinking level. Confirm provider authentication outside the evaluation, then validate again.</p></div>
+        </details>
+        <details>
+          <summary>Another evaluation is already active</summary>
+          <div><p>Only one top-level run is allowed globally. Use <code>/skill-eval status</code> or <code>/skill-eval monitor</code>. Let it finish, cancel it, or finalize it if its controller is stale.</p></div>
+        </details>
+        <details>
+          <summary>Pi says the controller is stale, dead, or missing</summary>
+          <div><p>Run <code>/skill-eval status [run-id]</code>. Pi offers to finalize the run as <strong>interrupted</strong>, terminate matching child processes, mark unfinished cells as errored or not run, preserve partial evidence, write reports, and release the global slot. It does not resume crashed work automatically.</p></div>
+        </details>
+        <details>
+          <summary>The run paused later than expected</summary>
+          <div><p>Pause is checkpoint-safe, not an immediate kill. It stops new dispatch, lets the currently active batch finish, and then enters <code>paused</code>. Use cancellation only when active cells must stop immediately.</p></div>
+        </details>
+        <details>
+          <summary>The run completed with an incomplete verdict</summary>
+          <div><p>Look for errored, cancelled, or not-run cells and <code>not_evaluated</code> acceptance buckets. Common causes are provider errors, timeouts, cost-budget exhaustion, cancellation, or controller interruption. The runner intentionally does not hide these with retries.</p></div>
+        </details>
+        <details>
+          <summary>A fixture uses submodules or Git LFS</summary>
+          <div><p>Git submodules and unresolved Git LFS pointer files are rejected in milestone 1. Materialize the required fixture content directly in a small local fixture or a pinned repository that does not depend on those mechanisms.</p></div>
+        </details>
+        <details>
+          <summary>The report is not available yet</summary>
+          <div><p>Reports are written when a run completes, is cancelled, or is finalized as interrupted. Use <code>status</code> or <code>monitor</code> while it is active.</p></div>
+        </details>
+      </section>
+
+      <section id="reference" aria-labelledby="reference-heading">
+        <div class="eyebrow">Reference</div>
+        <h2 id="reference-heading">Command cheat sheet</h2>
+        <div class="command-list">
+          <div class="command-row"><code>/skill-eval</code><span>Open the guided action picker.</span></div>
+          <div class="command-row"><code>/skill-eval help</code><span>Show direct command syntax.</span></div>
+          <div class="command-row"><code>/skill-eval validate &lt;comparison&gt; [--profile &lt;name&gt;]</code><span>Resolve and preview an experiment without starting setup or cells.</span></div>
+          <div class="command-row"><code>/skill-eval run &lt;comparison&gt; [--profile &lt;name&gt;] [-b]</code><span>Resolve, request approval, and launch the detached controller. Opens the monitor by default; <code>-b</code> leaves it in the background.</span></div>
+          <div class="command-row"><code>/skill-eval status [run-id]</code><span>Show summary; offer interruption finalization when appropriate.</span></div>
+          <div class="command-row"><code>/skill-eval monitor [run-id]</code><span>Open the live or retained model-free dashboard.</span></div>
+          <div class="command-row"><code>/skill-eval pause [run-id]</code><span>Pause safely after active work reaches a checkpoint.</span></div>
+          <div class="command-row"><code>/skill-eval resume [run-id]</code><span>Resume dispatch after pause.</span></div>
+          <div class="command-row"><code>/skill-eval cancel [run-id]</code><span>Confirm immediate and irreversible cancellation.</span></div>
+          <div class="command-row"><code>/skill-eval report [run-id]</code><span>Display the retained Markdown report.</span></div>
+          <div class="command-row"><code>/skill-eval delete &lt;run-id&gt;</code><span>Confirm permanent deletion of a terminal audit bundle.</span></div>
+        </div>
+        <div class="note">
+          <strong>Run ID is usually optional.</strong>
+          <p>Without one, Pi chooses the active run or the latest retained run. A unique run-ID prefix is also accepted.</p>
+        </div>
+        <h3 style="margin-top: 30px;">Current milestone boundary</h3>
+        <p>Milestone 1 runs Pi targets and deterministic checks. Codex, Claude Code, advisory LLM supervision, qualitative judging, HTML report export, custom grader scripts, Git submodules, and Git LFS fixtures are not yet supported. Unsupported configuration fails validation rather than being silently skipped.</p>
+      </section>
+
+      <footer>
+        <strong>Skill Evaluation Runner · Milestone 1 user guide</strong><br>
+        Use a small, approved real-provider smoke run before relying on a new suite for release decisions.
+        <div class="footer-links">
+          <a href="skill-evaluation-plan.html">Visual overview</a>
+          <a href="skill-evaluation-tool-design.md">Technical design</a>
+          <a href="../skills/skill-eval-planner/references/authoring-guide.md">Suite and comparison authoring guide</a>
+          <a href="../README.md">Package README</a>
+        </div>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
