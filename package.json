@@ -38,7 +38,6 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/evals/skill-eval/index.ts",
       "./extensions/safety/index.ts",
       "./extensions/usage/index.ts",
       "./extensions/skills/read-ledger.ts",
@@ -80,7 +79,6 @@
     "LICENSE"
   ],
   "dependencies": {
-    "tsx": "^4.23.12",
-    "yaml": "^2.9.0"
+    "tsx": "^4.23.12"
   }
 }
