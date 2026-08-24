@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { notifySupacodeAttention } from "../../src/shared/supacode-notifications.ts";
 
 type Hazard = {
     label: string;
@@ -384,6 +385,7 @@ async function confirmDangerousOperation(
         return false;
     }
 
+    notifySupacodeAttention(`Permission required: ${title} ${reasons.join(", ")}`);
     return ctx.ui.confirm(title, message);
 }
 
@@ -409,6 +411,9 @@ async function chooseDangerousCommandAction(
     const blockLabel = "Block";
     const explainLabel = "Explain";
 
+    notifySupacodeAttention(
+        `Permission required: Allow potentially dangerous bash command? ${reasons.join(", ")}`,
+    );
     const choice = await ctx.ui.select(message, [allowLabel, blockLabel, explainLabel]);
     if (choice === allowLabel) return "allow";
     if (choice === explainLabel) return "explain";

@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { askMultiSelectQuestion, askQuestionnaire } from "../../src/shared/interactive-questions.ts";
+import { notifySupacodeAttention } from "../../src/shared/supacode-notifications.ts";
 
 const optionSchema = Type.Object({
     label: Type.String({ description: "Short option label shown to the user" }),
@@ -98,8 +99,11 @@ export default function (pi: ExtensionAPI) {
                     };
                 }
 
+                const questionnaireTitle = params.question ?? "Questions";
+                const notificationQuestion = params.question ?? questions[0]?.question ?? questionnaireTitle;
+                notifySupacodeAttention(`Question: ${notificationQuestion}`);
                 const answers = await askQuestionnaire<string>(ctx, {
-                    title: params.question ?? "Questions",
+                    title: questionnaireTitle,
                     questions: questions.map((question) => ({
                         id: question.id,
                         label: question.label,
@@ -152,6 +156,7 @@ export default function (pi: ExtensionAPI) {
             }
 
             if (allowOther) {
+                notifySupacodeAttention(`Question: ${params.question}`);
                 const answers = await askQuestionnaire<string>(ctx, {
                     title: params.question,
                     questions: [{
@@ -182,6 +187,7 @@ export default function (pi: ExtensionAPI) {
                 };
             }
 
+            notifySupacodeAttention(`Question: ${params.question}`);
             const selected = await askMultiSelectQuestion<string>(ctx, {
                 title: params.question,
                 multiple: allowMultiple,

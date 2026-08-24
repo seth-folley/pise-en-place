@@ -48,6 +48,7 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 - `/statusline` cycles status line modes; `/statusline-colors` toggles context color examples.
 - `extensions/ui/response-time.ts` tracks response timing; `/response-time` toggles reporting.
 - `extensions/ui/interactive-agent-questions.ts` exposes the `ask_user` tool for guided TUI questions.
+- Safety permission prompts and `ask_user` questions send a rich attention notification to their originating Supacode surface; the notifier respects Supacode's notification settings and is inert in other terminals.
 
 ### Productivity helpers
 
