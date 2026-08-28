@@ -138,6 +138,8 @@ type UsageLedgerRecord = {
     gitCommonDir: string | null; // shared .git dir across worktrees when available
   };
 
+  tags?: string[]; // arbitrary active session tags, if any
+
   provider: string | null;
   model: string | null;
   api: string | null;
@@ -201,8 +203,12 @@ Draft command surface:
 /usage project <project>        Show lifetime usage for a specific project
 /usage model --list             List recorded models
 /usage model <model>            Show lifetime usage for a specific model
-/usage clear                    Clear the usage ledger after confirmation
-/usage clear --yes              Clear the usage ledger without confirmation
+/usage tag <comma-separated tags>  Add arbitrary tags to subsequent session usage
+/usage tag --remove <tag>          Remove an active tag
+/usage tag --clear                 Clear active tags
+/usage tag --list                  List active tags
+/usage clear                       Clear the usage ledger after confirmation
+/usage clear --yes                 Clear the usage ledger without confirmation
 /usage -h                       Show command help
 /usage --help                   Show command help
 ```

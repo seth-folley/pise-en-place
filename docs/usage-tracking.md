@@ -12,6 +12,7 @@ Each record includes:
 - session file and session entry ID
 - current working directory
 - git-derived project metadata, including the local git branch when available
+- active session usage tags, when set
 - provider, model, and API
 - provider-reported usage/cost surfaced through Pi for each response
 - input, output, cache read, and cache write tokens
@@ -63,6 +64,23 @@ This avoids splitting usage across multiple git worktrees for the same project w
 
 Branch tracking stores the local git branch name from `git branch --show-current`. Detached HEADs, non-git directories, and older records without branch metadata are grouped as `untracked` in project branch reports.
 
+### Local attribution override
+
+A workspace may override the project identity and/or branch for newly recorded usage with `.pi/usage.json`:
+
+```json
+{
+  "version": 1,
+  "project": {
+    "gitRemote": "github.com/sethfolley/pise-en-place",
+    "gitBranch": "feature/usage-attribution"
+  },
+  "tags": ["ios", "feature-work"]
+}
+```
+
+Both `project.gitRemote` and `project.gitBranch` are optional. `gitRemote` is normalized and used as the normal project grouping key; the display name continues to be derived from it. Omitted values retain the Git-derived value. `tags` is an optional array of non-empty default tags. Defaults are combined with active session tags. The config affects only new ledger records and does not change the working directory or local Git metadata recorded with them.
+
 ## Commands
 
 Default month-to-date summary:
@@ -106,7 +124,7 @@ Projects:
 /usage project <project> --branch <branch>
 ```
 
-`/usage project <project>` shows a lifetime project report with an overview section and a branch breakdown. Branch names are local to a project; use `--branch` with no value to select a recorded branch interactively, or `--branch <branch>` to filter directly.
+`/usage project <project>` shows a lifetime project report with overview, branch, and tag breakdowns when tagged records exist. Branch names are local to a project; use `--branch` with no value to select a recorded branch interactively, or `--branch <branch>` to filter directly. Project- or branch-filtered summaries and reports also include available tag breakdowns. A record with multiple tags contributes to each of its tag rows, so tag totals may overlap rather than sum to the report total.
 
 Models:
 
@@ -149,6 +167,19 @@ Filter time ranges:
 
 `--branch` requires a project because local branch names may repeat across repositories.
 
+### Session tags
+
+Tags are arbitrary, session-scoped labels attached to every later usage record. They are additive and persist in the current session branch. Tags from `.pi/usage.json` are included as defaults.
+
+```text
+/usage tag implementation,usage-attribution
+/usage tag --remove implementation
+/usage tag --clear
+/usage tag --list
+```
+
+Use quotes for a tag containing spaces, for example `/usage tag "PR review"`. Commas separate tags. Adding a tag already in the active list has no effect. Tags affect only subsequent records; they do not change historical ledger entries.
+
 Help:
 
 ```text
@@ -169,6 +200,7 @@ Machine-readable output:
 /usage month --project <project> --branch <branch> --json
 /usage skills --json
 /usage skills --project --json
+/usage tag --list --json
 /usage -h --json
 ```
 

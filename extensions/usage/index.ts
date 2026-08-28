@@ -22,6 +22,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { mergeUsageProjectAttribution, normalizeGitRemote, normalizeUsageTags, readUsageConfig, type UsageConfig } from "../../src/shared/usage-attribution.ts";
 
 const execFileAsync = promisify(execFile);
 const ledgerDir = path.join(os.homedir(), ".pi", "agent", "usage");
@@ -30,7 +31,7 @@ const skillReadLedgerPath = path.join(os.homedir(), ".pi", "agent", "skill-reads
 const schemaVersion = 1;
 
 type UsageRange = "today" | "week" | "month" | "lifetime";
-type UsageMode = "summary" | "report" | "project" | "model" | "skills" | "clear";
+type UsageMode = "summary" | "report" | "project" | "model" | "skills" | "clear" | "tag";
 
 type ProjectInfo = {
 	name: string | null;
@@ -50,6 +51,7 @@ type UsageLedgerRecord = {
 	sessionEntryId: string | null;
 	cwd: string | null;
 	project: ProjectInfo;
+	tags?: string[];
 	provider: string | null;
 	model: string | null;
 	api: string | null;
@@ -76,6 +78,9 @@ type ParsedUsageCommand = {
 	list: boolean;
 	help: boolean;
 	yes: boolean;
+	tagClear?: boolean;
+	tagRemove?: string;
+	tags?: string[];
 	project?: string;
 	groupByProject?: boolean;
 	model?: string;
@@ -109,6 +114,8 @@ type UsageReportGroup = {
 	tokenOnlyCalls: number;
 };
 
+type UsageTagBreakdown = UsageReportGroup;
+
 type UsageReport = {
 	range: UsageRange;
 	filter?: { project?: string; model?: string; branch?: string };
@@ -116,6 +123,7 @@ type UsageReport = {
 	providers: UsageReportGroup[];
 	models: UsageReportGroup[];
 	projects: UsageReportGroup[];
+	tags?: UsageTagBreakdown[];
 	topRecords: Array<{
 		timestamp: string;
 		project: string;
@@ -131,7 +139,16 @@ type SessionEntry = {
 	type: string;
 	id?: string;
 	message?: any;
+	customType?: string;
+	data?: unknown;
 };
+
+type UsageTagState = {
+	version: 1;
+	tags: string[];
+};
+
+const usageTagCustomType = "usage-tags";
 
 type SkillReadRecord = {
 	version: 1;
@@ -204,6 +221,14 @@ function tokenizeArgs(args: string): string[] {
 	return tokens;
 }
 
+function parseTags(value: string): string[] {
+	return normalizeUsageTags(value.split(","));
+}
+
+function formatTags(tags: string[]): string {
+	return tags.length ? `Active usage tags: ${tags.join(", ")}` : "No active usage tags.";
+}
+
 // Parse the intentionally small command grammar into one normalized shape so
 // execution can be shared across text and JSON output modes.
 function parseUsageArgs(args: string): ParsedUsageCommand {
@@ -236,6 +261,18 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 
 		if (token === "--yes" || token === "-y") {
 			command.yes = true;
+			continue;
+		}
+
+		if (token === "--clear") {
+			command.tagClear = true;
+			continue;
+		}
+
+		if (token === "--remove") {
+			const value = tokens[++i];
+			if (!value) return { ...command, error: "Missing value for --remove" };
+			command.tagRemove = value;
 			continue;
 		}
 
@@ -274,9 +311,11 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 
 	const first = positionals[0];
 	if (!first) {
+		if (command.tagClear || command.tagRemove) return { ...command, error: "--clear and --remove are only supported by /usage tag" };
 		if (command.groupByProject) return { ...command, error: "Missing value for --project" };
 		return command;
 	}
+	if (first !== "tag" && (command.tagClear || command.tagRemove)) return { ...command, error: "--clear and --remove are only supported by /usage tag" };
 
 	if (first === "report") {
 		command.mode = "report";
@@ -321,6 +360,22 @@ function parseUsageArgs(args: string): ParsedUsageCommand {
 	if (first === "clear") {
 		command.mode = "clear";
 		if (positionals.length > 1) return { ...command, error: `Unexpected argument: ${positionals[1]}` };
+		return command;
+	}
+
+	if (first === "tag") {
+		command.mode = "tag";
+		if (command.groupByProject || command.project || command.model || command.branch || command.selectBranch || command.visual || command.yes) {
+			return { ...command, error: "Tag commands only support --clear, --remove, --list, and --json" };
+		}
+		if (command.tagClear && (command.tagRemove || command.list || positionals.length > 1)) return { ...command, error: "Use --clear by itself" };
+		if (command.tagRemove && (command.list || positionals.length > 1)) return { ...command, error: "Use --remove with one tag name" };
+		if (command.list && positionals.length > 1) return { ...command, error: "Use --list by itself" };
+		if (!command.tagClear && !command.tagRemove && !command.list) {
+			const tags = parseTags(positionals.slice(1).join(" "));
+			if (!tags.length) return { ...command, error: "Usage: /usage tag <comma-separated tags>" };
+			command.tags = tags;
+		}
 		return command;
 	}
 
@@ -497,7 +552,7 @@ function titleForRange(range: UsageRange): string {
 	return "Lifetime";
 }
 
-function formatSummary(summary: UsageSummary): string {
+function formatSummary(summary: UsageSummary, tags: UsageTagBreakdown[] = []): string {
 	const titleParts = [`Usage — ${titleForRange(summary.range)}`];
 	if (summary.filter?.project) titleParts.push(`project: ${summary.filter.project}`);
 	if (summary.filter?.branch) titleParts.push(`branch: ${summary.filter.branch}`);
@@ -510,6 +565,7 @@ function formatSummary(summary: UsageSummary): string {
 		`Calls: ${summary.calls}  Projects: ${summary.projects}  Models: ${summary.models}`,
 	];
 
+	if (tags.length) lines.push("", "Tags", ...formatTagBreakdownLines(tags));
 	if (summary.skippedLines) lines.push(`Skipped corrupt ledger lines: ${summary.skippedLines}`);
 	return lines.join("\n");
 }
@@ -538,13 +594,30 @@ function groupProjectRecordsByBranch(records: UsageLedgerRecord[], project: stri
 		.sort((a, b) => b.summary.totalTokens - a.summary.totalTokens || a.label.localeCompare(b.label));
 }
 
+function tagBreakdown(records: UsageLedgerRecord[]): UsageTagBreakdown[] {
+	const tags = new Map<string, UsageTagBreakdown>();
+	for (const record of records) {
+		for (const tag of normalizeUsageTags(record.tags ?? [])) addReportGroup(tags, tag, record);
+	}
+	return sortedReportGroups(tags);
+}
+
+function formatTagBreakdownLines(tags: UsageTagBreakdown[]): string[] {
+	return tags.map((tag) => {
+		const tokenOnly = tag.tokenOnlyCalls ? `, ${tag.tokenOnlyCalls} token-only` : "";
+		return `- ${tag.key} — ${formatCost(tag.totalCost)}, ${formatTokens(tag.totalTokens)} tokens, ${tag.calls} calls${tokenOnly}`;
+	});
+}
+
 function buildProjectUsageReport(records: UsageLedgerRecord[], options: { project: string; skippedLines: number }) {
+	const projectRecords = filterRecords(records, { range: "lifetime", project: options.project });
 	const overview = summarizeRecords(records, { range: "lifetime", project: options.project, skippedLines: options.skippedLines });
 	return {
 		project: options.project,
 		range: "lifetime" as UsageRange,
 		overview,
 		branches: groupProjectRecordsByBranch(records, options.project),
+		tags: tagBreakdown(projectRecords),
 		skippedLines: options.skippedLines,
 	};
 }
@@ -570,6 +643,7 @@ function formatProjectUsageReport(records: UsageLedgerRecord[], options: { proje
 		lines.push("No usage records found.");
 	}
 
+	if (report.tags.length) lines.push("", "Tags", ...formatTagBreakdownLines(report.tags));
 	if (options.skippedLines) lines.push(`Skipped corrupt ledger lines: ${options.skippedLines}`);
 	return lines.join("\n");
 }
@@ -606,6 +680,7 @@ function buildUsageReport(records: UsageLedgerRecord[], options: { range: UsageR
 		providers: sortedReportGroups(providers),
 		models: sortedReportGroups(models),
 		projects: sortedReportGroups(projects),
+		...(options.project || options.branch ? { tags: tagBreakdown(filtered) } : {}),
 		topRecords: filtered
 			.filter((record) => typeof record.usage.totalCost === "number")
 			.sort((a, b) => (b.usage.totalCost ?? 0) - (a.usage.totalCost ?? 0) || b.usage.totalTokens - a.usage.totalTokens)
@@ -649,6 +724,7 @@ function formatUsageReport(records: UsageLedgerRecord[], options: { range: Usage
 		"",
 		"By project",
 		...formatReportGroupLines(report.projects, "No project usage records found."),
+		...(report.tags?.length ? ["", "By tag", ...formatTagBreakdownLines(report.tags)] : []),
 		"",
 		"Top cost records",
 	];
@@ -710,6 +786,7 @@ function formatVisualUsageReport(records: UsageLedgerRecord[], options: { range:
 		...formatVisualGroup("By provider", report.providers),
 		"",
 		...formatVisualGroup("By model", report.models),
+		...(report.tags?.length ? ["", ...formatVisualGroup("By tag", report.tags)] : []),
 	];
 
 	if (options.skippedLines) lines.push("", `Skipped corrupt ledger lines: ${options.skippedLines}`);
@@ -729,12 +806,16 @@ function formatHelp(json: boolean): string {
 			{ command: "/usage report --visual", description: "Show static horizontal spend graphs by project, provider, and model" },
 			{ command: "/usage project", description: "Select a recorded project and show lifetime usage" },
 			{ command: "/usage project --list", description: "List recorded projects" },
-			{ command: "/usage project <project>", description: "Show lifetime usage overview and branch breakdown for a project" },
-			{ command: "/usage project <project> --branch", description: "Select a recorded branch and show project usage for that branch" },
+			{ command: "/usage project <project>", description: "Show lifetime usage overview, branch breakdown, and available tags" },
+			{ command: "/usage project <project> --branch", description: "Select a recorded branch and show project usage and available tags for that branch" },
 			{ command: "/usage model --list", description: "List recorded models" },
 			{ command: "/usage model <model>", description: "Show lifetime usage for a model" },
 			{ command: "/usage skills [range]", description: "Show skill usage counts" },
 			{ command: "/usage skills --project", description: "Group skill usage by project" },
+			{ command: "/usage tag <comma-separated tags>", description: "Add arbitrary tags to subsequent usage in this session" },
+			{ command: "/usage tag --remove <tag>", description: "Remove one active usage tag" },
+			{ command: "/usage tag --clear", description: "Clear active usage tags" },
+			{ command: "/usage tag --list", description: "List active usage tags" },
 			{ command: "/usage clear", description: "Clear the usage ledger after confirmation" },
 		],
 		options: [
@@ -742,7 +823,7 @@ function formatHelp(json: boolean): string {
 			{ option: "--project", description: "With /usage skills, group skill usage by project" },
 			{ option: "--model <model>", description: "Filter a time range by model" },
 			{ option: "--branch [branch]", description: "Filter project usage by local git branch, or select one interactively when omitted" },
-			{ option: "--list", description: "List values for project/model commands" },
+			{ option: "--list", description: "List values for project/model/tag commands" },
 			{ option: "--json", description: "Emit machine-readable JSON" },
 			{ option: "--visual", description: "With /usage report, show static horizontal bar charts" },
 			{ option: "-y, --yes", description: "Skip confirmation for /usage clear" },
@@ -947,21 +1028,6 @@ function resolveGitPath(cwd: string, gitPath: string | null): string | null {
 	return path.isAbsolute(gitPath) ? gitPath : path.resolve(cwd, gitPath);
 }
 
-// Normalize common SSH/HTTPS remote forms to a stable grouping key, e.g.
-// git@github.com:user/repo.git and https://github.com/user/repo -> github.com/user/repo.
-function normalizeGitRemote(remote: string | null): string | null {
-	if (!remote) return null;
-	let value = remote.trim();
-	if (!value) return null;
-
-	const scpLike = value.match(/^git@([^:]+):(.+)$/);
-	if (scpLike) value = `${scpLike[1]}/${scpLike[2]}`;
-	else value = value.replace(/^https?:\/\//, "").replace(/^ssh:\/\/git@/, "").replace(/^git@/, "");
-
-	value = value.replace(/\.git$/, "").replace(/\/+$/, "").toLowerCase();
-	return value || null;
-}
-
 function deriveProjectName(project: ProjectInfo, cwd: string): string | null {
 	const source = project.gitRemote ?? project.gitRoot ?? cwd;
 	if (!source) return null;
@@ -977,6 +1043,17 @@ async function getProjectInfo(cwd: string): Promise<ProjectInfo> {
 	const project: ProjectInfo = { name: null, gitRemote: remote, gitRoot, gitCommonDir, gitBranch };
 	project.name = deriveProjectName(project, cwd);
 	return project;
+}
+
+function applyProjectAttributionOverride(project: ProjectInfo, cwd: string, config: UsageConfig | null): ProjectInfo {
+	const attribution = mergeUsageProjectAttribution({ gitRemote: project.gitRemote ?? undefined, gitBranch: project.gitBranch ?? undefined }, config?.project ?? null);
+	const attributed: ProjectInfo = {
+		...project,
+		gitRemote: attribution.gitRemote ? normalizeGitRemote(attribution.gitRemote) : null,
+		gitBranch: attribution.gitBranch ?? null,
+	};
+	attributed.name = deriveProjectName(attributed, cwd);
+	return attributed;
 }
 
 function getCwd(ctx: ExtensionContext): string | null {
@@ -1019,7 +1096,7 @@ function findSessionEntryId(ctx: ExtensionContext, message: any): string | null 
 
 // Build the persistent record from Pi's assistant message. Project metadata is
 // filled in after this by getProjectInfo because it requires async git commands.
-function buildRecord(ctx: ExtensionContext, message: any): UsageLedgerRecord {
+function buildRecord(ctx: ExtensionContext, message: any, tags: string[]): UsageLedgerRecord {
 	const cwd = getCwd(ctx);
 	const sessionFile = ctx.sessionManager.getSessionFile?.() ?? null;
 	const sessionEntryId = findSessionEntryId(ctx, message);
@@ -1041,6 +1118,7 @@ function buildRecord(ctx: ExtensionContext, message: any): UsageLedgerRecord {
 		sessionEntryId,
 		cwd,
 		project: { name: null, gitRemote: null, gitRoot: null, gitCommonDir: null, gitBranch: null },
+		...(tags.length ? { tags: [...tags] } : {}),
 		provider: message.provider ?? (ctx as any).model?.provider ?? null,
 		model: message.model ?? (ctx as any).model?.id ?? null,
 		api: message.api ?? (ctx as any).model?.api ?? null,
@@ -1242,10 +1320,69 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 	}
 
 	const summary = summarizeRecords(records, { range: parsed.range, project: parsed.project, model: parsed.model, branch: parsed.branch, skippedLines });
-	await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, summary }, null, 2) : formatSummary(summary), parsed.json);
+	const tags = parsed.project || parsed.branch
+		? tagBreakdown(filterRecords(records, { range: parsed.range, project: parsed.project, model: parsed.model, branch: parsed.branch }))
+		: [];
+	await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, summary: { ...summary, ...(tags.length ? { tags } : {}) } }, null, 2) : formatSummary(summary, tags), parsed.json);
 }
 
 export default function (pi: ExtensionAPI) {
+	let activeTags: string[] = [];
+
+	const reconstructTags = (ctx: ExtensionContext): void => {
+		activeTags = [];
+		for (const entry of ctx.sessionManager.getBranch() as SessionEntry[]) {
+			if (entry.type !== "custom" || entry.customType !== usageTagCustomType) continue;
+			const state = entry.data as UsageTagState | undefined;
+			if (state?.version === 1 && Array.isArray(state.tags) && state.tags.every((tag) => typeof tag === "string")) {
+				activeTags = parseTags(state.tags.join(","));
+			}
+		}
+	};
+
+	const updateTags = (tags: string[]): UsageTagState => {
+		activeTags = tags;
+		return { version: 1, tags: [...activeTags] };
+	};
+
+	const handleTagCommand = async (parsed: ParsedUsageCommand, ctx: ExtensionContext): Promise<void> => {
+		if (parsed.error) {
+			ctx.ui.notify(parsed.error, "error");
+			return;
+		}
+		if (parsed.list) {
+			const result = { ok: true, tags: activeTags };
+			await notifyOutput(ctx, parsed.json ? JSON.stringify(result, null, 2) : formatTags(activeTags), parsed.json);
+			return;
+		}
+		if (parsed.tagClear) {
+			pi.appendEntry(usageTagCustomType, updateTags([]));
+			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, tags: [] }, null, 2) : "Cleared active usage tags.", parsed.json);
+			return;
+		}
+		if (parsed.tagRemove) {
+			const remaining = activeTags.filter((tag) => tag !== parsed.tagRemove);
+			if (remaining.length === activeTags.length) {
+				await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error: `Tag not active: ${parsed.tagRemove}` }, null, 2) : `Tag not active: ${parsed.tagRemove}`, parsed.json);
+				return;
+			}
+			pi.appendEntry(usageTagCustomType, updateTags(remaining));
+			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, tags: activeTags }, null, 2) : formatTags(activeTags), parsed.json);
+			return;
+		}
+		const tags = parseTags([...activeTags, ...(parsed.tags ?? [])].join(","));
+		pi.appendEntry(usageTagCustomType, updateTags(tags));
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, tags: activeTags }, null, 2) : formatTags(activeTags), parsed.json);
+	};
+
+	pi.on("session_start", async (_event, ctx) => {
+		reconstructTags(ctx);
+	});
+
+	pi.on("session_tree", async (_event, ctx) => {
+		reconstructTags(ctx);
+	});
+
 	pi.on("message_end", async (event, ctx) => {
 		// Only assistant responses have provider usage. Tool results and user messages
 		// are ignored; additional assistant turns caused by tool calls are counted if
@@ -1253,12 +1390,23 @@ export default function (pi: ExtensionAPI) {
 		if (event.message.role !== "assistant") return;
 		if (!event.message.usage) return;
 
-		const record = buildRecord(ctx, event.message);
+		const record = buildRecord(ctx, event.message, activeTags);
 		// Protect against duplicate event delivery within this process. Cross-process
 		// dedupe is intentionally deferred unless/until we move to SQLite.
 		if (seenRecordIds.has(record.id)) return;
 
-		if (record.cwd) record.project = await getProjectInfo(record.cwd);
+		if (record.cwd) {
+			const project = await getProjectInfo(record.cwd);
+			try {
+				const config = await readUsageConfig(record.cwd);
+				record.project = applyProjectAttributionOverride(project, record.cwd, config);
+				record.tags = normalizeUsageTags([...(config?.tags ?? []), ...activeTags]);
+				if (!record.tags.length) delete record.tags;
+			} catch (error: any) {
+				console.warn(`Usage tracker ignored local usage config: ${error?.message ?? String(error)}`);
+				record.project = project;
+			}
+		}
 		await appendLedgerRecord(record);
 		seenRecordIds.add(record.id);
 	});
@@ -1267,6 +1415,11 @@ export default function (pi: ExtensionAPI) {
 		description: "Show cross-session token usage and estimated spending",
 		handler: async (args, ctx) => {
 			try {
+				const parsed = parseUsageArgs(args);
+				if (parsed.mode === "tag" || (parsed.error && tokenizeArgs(args)[0] === "tag")) {
+					await handleTagCommand(parsed, ctx);
+					return;
+				}
 				await handleUsageCommand(args, ctx);
 			} catch (error: any) {
 				ctx.ui.notify(`Usage ledger error: ${error?.message ?? String(error)}`, "error");
