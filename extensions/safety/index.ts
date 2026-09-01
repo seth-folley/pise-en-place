@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -25,6 +26,15 @@ type ContentBlock = {
     text?: string;
 };
 
+type SafetyDialogRecord = {
+    kind: "bash" | "file";
+    subject: string;
+    reasons: string[];
+    decision: "allow" | "block" | "explain";
+};
+
+const safetyDialogEntryType = "pise-en-place:safety-dialog";
+
 const protectedSystemRoots = [
     "/Applications",
     "/bin",
@@ -43,6 +53,12 @@ const protectedSystemRoots = [
 ];
 
 const piHome = path.resolve(homedir(), ".pi");
+const safetyAllowedPathsConfigName = "safety-allowed-paths.json";
+
+type SafetyAllowedPathsConfig = {
+    version: 1;
+    readOnlyPaths: string[];
+};
 
 const allowedTempScratchRoots = [
     "/tmp",
@@ -103,13 +119,42 @@ function stripShellQuotes(value: string): string {
     return value.replace(/^["']|["']$/g, "");
 }
 
-function normalizeCandidatePath(candidate: string): string | undefined {
+function normalizeCandidatePath(candidate: string, homeDirectory = homedir()): string | undefined {
     const trimmed = stripShellQuotes(candidate.trim()).replace(/\\ /g, " ");
-    if (trimmed.startsWith("~/")) {
-        return path.resolve(homedir(), trimmed.slice(2));
-    }
+    if (trimmed === "~" || trimmed === "$HOME") return path.resolve(homeDirectory);
+    if (trimmed.startsWith("~/")) return path.resolve(homeDirectory, trimmed.slice(2));
+    if (trimmed.startsWith("$HOME/")) return path.resolve(homeDirectory, trimmed.slice("$HOME/".length));
     if (!path.isAbsolute(trimmed)) return undefined;
     return path.resolve(trimmed);
+}
+
+function normalizeConfiguredReadOnlyPath(candidate: unknown, homeDirectory: string): string | undefined {
+    if (typeof candidate !== "string") return undefined;
+
+    const normalized = normalizeCandidatePath(candidate, homeDirectory);
+    if (!normalized || !isPathInRoot(normalized, homeDirectory)) return undefined;
+    return normalized;
+}
+
+/** Reads opt-in, portable home-directory roots from ~/.pi/safety-allowed-paths.json. */
+export function loadSafetyReadOnlyPaths(
+    configPath = path.join(homedir(), ".pi", safetyAllowedPathsConfigName),
+    homeDirectory = homedir(),
+): string[] {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(readFileSync(configPath, "utf8"));
+    } catch {
+        return [];
+    }
+
+    if (!parsed || typeof parsed !== "object") return [];
+    const config = parsed as Partial<SafetyAllowedPathsConfig>;
+    if (config.version !== 1 || !Array.isArray(config.readOnlyPaths)) return [];
+
+    return [...new Set(config.readOnlyPaths
+        .map((candidate) => normalizeConfiguredReadOnlyPath(candidate, homeDirectory))
+        .filter((candidate): candidate is string => candidate !== undefined))];
 }
 
 function isPathInRoot(candidate: string, root: string): boolean {
@@ -169,7 +214,7 @@ function commandName(token: string): string {
 
 function isPathLikeToken(token: string): boolean {
     const cleaned = cleanToken(token);
-    return cleaned.startsWith("/") || cleaned.startsWith("~/");
+    return cleaned.startsWith("/") || cleaned === "~" || cleaned.startsWith("~/") || cleaned === "$HOME" || cleaned.startsWith("$HOME/");
 }
 
 function allPathMentionsAreAllowedTemp(tokens: string[]): boolean {
@@ -266,7 +311,164 @@ function isTempScopedFileOperation(command: string, matches: string[]): boolean 
     return sawTempScopedOperation;
 }
 
-function detectHazards(command: string): string[] {
+const readOnlyWorkspaceCommands = new Set([
+    "find",
+    "rg",
+    "grep",
+    "ls",
+    "stat",
+    "file",
+    "tree",
+    "pwd",
+    "printf",
+    "echo",
+    "test",
+    "[",
+    "sort",
+    "head",
+    "tail",
+    "uniq",
+    "wc",
+]);
+
+const readOnlyGitSubcommands = new Set([
+    "status",
+    "log",
+    "show",
+    "diff",
+    "branch",
+    "rev-parse",
+    "show-ref",
+    "ls-files",
+    "rev-list",
+    "merge-base",
+]);
+
+const readOnlyGhSubcommands = new Set([
+    "pr view",
+    "pr list",
+    "pr diff",
+    "pr checks",
+    "label list",
+    "repo view",
+    "issue view",
+    "issue list",
+]);
+
+function isPathInsideAllowedReadRoots(candidate: string, allowedRoots: string[]): boolean {
+    const normalized = normalizeCandidatePath(candidate);
+    return normalized !== undefined && allowedRoots.some((root) => isPathInRoot(normalized, root));
+}
+
+function isReadOnlyGitCommand(tokens: string[]): boolean {
+    const subcommand = cleanToken(tokens[1] ?? "");
+    if (!readOnlyGitSubcommands.has(subcommand)) return false;
+
+    if (subcommand === "branch") {
+        const branchOptions = new Set(["--show-current", "--list", "-l", "--all", "-a", "--remotes", "-r", "--no-color"]);
+        return tokens.slice(2).every((token) => branchOptions.has(cleanToken(token)));
+    }
+
+    const forbiddenOptions = [
+        "--ext-diff",
+        "--textconv",
+        "--output",
+        "-o",
+        "--delete",
+        "-d",
+        "-D",
+        "--move",
+        "-m",
+        "-M",
+        "--copy",
+        "-c",
+        "-C",
+        "--edit-description",
+    ];
+    return !tokens.some((token) => {
+        const cleaned = cleanToken(token);
+        return forbiddenOptions.includes(cleaned) || cleaned.startsWith("--output=");
+    });
+}
+
+function isReadOnlyGhCommand(tokens: string[]): boolean {
+    const subcommand = `${cleanToken(tokens[1] ?? "")} ${cleanToken(tokens[2] ?? "")}`;
+    if (readOnlyGhSubcommands.has(subcommand)) return true;
+
+    return false;
+}
+
+function isReadOnlyWorkspaceSegment(segment: string[], allowedRoots: string[]): boolean {
+    const tokens = segment.filter((token) => token.length > 0);
+    if (tokens.length === 0) return true;
+
+    if (tokens[0] === "then" || tokens[0] === "else") tokens.shift();
+    if (tokens.length === 0 || tokens[0] === "fi") return tokens.length === 1;
+
+    const command = commandName(tokens[0]);
+    if (command === "if") {
+        return isReadOnlyWorkspaceSegment(tokens.slice(1), allowedRoots);
+    }
+
+    const isAllowed = command === "git"
+        ? isReadOnlyGitCommand(tokens)
+        : command === "gh"
+            ? isReadOnlyGhCommand(tokens)
+            : readOnlyWorkspaceCommands.has(command);
+    if (!isAllowed) return false;
+
+    if (command === "find" && tokens.some((token) => /^(?:-delete|-exec|-execdir|-ok|-okdir|-fprint0?|-fprintf|-fls)$/.test(cleanToken(token)))) {
+        return false;
+    }
+    if (command === "rg" && tokens.some((token) => /^(?:--pre|--pre-glob)$/.test(cleanToken(token)))) {
+        return false;
+    }
+    if (command === "sort" && tokens.some((token) => /^(?:-o|--output|--compress-program)$/.test(cleanToken(token)))) {
+        return false;
+    }
+    if (command === "tree" && tokens.some((token) => /^(?:-o|--output)$/.test(cleanToken(token)))) {
+        return false;
+    }
+    if (command === "gh" && tokens.some((token) => cleanToken(token) === "--web")) {
+        return false;
+    }
+
+    return tokens.every((token) => {
+        const cleaned = cleanToken(token);
+        if (!isPathLikeToken(cleaned)) return !cleaned.includes("..");
+        return isPathInsideAllowedReadRoots(cleaned, allowedRoots);
+    });
+}
+
+/**
+ * Allows a deliberately small, read-only shell subset for workspace research
+ * and opt-in paths from ~/.pi/safety-allowed-paths.json. Ambiguous shell syntax,
+ * external paths, and commands with execution or write capabilities are rejected.
+ */
+export function isReadOnlyWorkspaceCommand(
+    command: string,
+    workspaceRoot = process.cwd(),
+    configuredReadOnlyRoots: string[] = [],
+): boolean {
+    if (!command.trim()) return false;
+    const withoutHomeReferences = command.replace(/\$HOME(?=\/|\s|$)/g, "");
+    if (/[`]|\$\(|\$[A-Za-z_{]|&&|\|\|/.test(withoutHomeReferences)) return false;
+
+    // Discard only stderr redirects to /dev/null. Any other redirection can write.
+    const withoutSafeRedirects = command.replace(/(?:^|\s)2?>\s*\/dev\/null\b/g, " ");
+    if (/[>&()]/.test(withoutSafeRedirects)) return false;
+
+    const allowedRoots = [path.resolve(workspaceRoot), ...configuredReadOnlyRoots.map((root) => path.resolve(root))];
+    return withoutSafeRedirects
+        .split(";")
+        .every((part) => part
+            .split("|")
+            .every((segment) => isReadOnlyWorkspaceSegment(tokenizeShellLike(segment), allowedRoots)));
+}
+
+function detectHazards(command: string, configuredReadOnlyRoots: string[] = []): string[] {
+    if (isReadOnlyWorkspaceCommand(command, process.cwd(), configuredReadOnlyRoots)) return [];
+
     const matches: string[] = [];
 
     for (const hazard of hazards) {
@@ -372,7 +574,12 @@ function formatExplanationForDisplay(explanation: string): string {
     return `${unfenced.slice(0, 1200)}…`;
 }
 
+function recordSafetyDialog(pi: ExtensionAPI, record: SafetyDialogRecord): void {
+    pi.appendEntry(safetyDialogEntryType, record);
+}
+
 async function confirmDangerousOperation(
+    pi: ExtensionAPI,
     title: string,
     details: string,
     reasons: string[],
@@ -386,10 +593,18 @@ async function confirmDangerousOperation(
     }
 
     notifySupacodeAttention(`Permission required: ${title} ${reasons.join(", ")}`);
-    return ctx.ui.confirm(title, message);
+    const allowed = await ctx.ui.confirm(title, message);
+    recordSafetyDialog(pi, {
+        kind: "file",
+        subject: details,
+        reasons,
+        decision: allowed ? "allow" : "block",
+    });
+    return allowed;
 }
 
 async function chooseDangerousCommandAction(
+    pi: ExtensionAPI,
     command: string,
     reasons: string[],
     priorExplanationRequest: ExplanationRequest | undefined,
@@ -415,9 +630,18 @@ async function chooseDangerousCommandAction(
         `Permission required: Allow potentially dangerous bash command? ${reasons.join(", ")}`,
     );
     const choice = await ctx.ui.select(message, [allowLabel, blockLabel, explainLabel]);
-    if (choice === allowLabel) return "allow";
-    if (choice === explainLabel) return "explain";
-    return "block";
+    const decision: DangerousOperationAction = choice === allowLabel
+        ? "allow"
+        : choice === explainLabel
+            ? "explain"
+            : "block";
+    recordSafetyDialog(pi, {
+        kind: "bash",
+        subject: summarizeCommand(command),
+        reasons,
+        decision,
+    });
+    return decision;
 }
 
 function blockedOutput(reasons: string[]): string {
@@ -464,11 +688,11 @@ export default function (pi: ExtensionAPI) {
     pi.on("tool_call", async (event, ctx) => {
         if (event.toolName === "bash") {
             const command = String((event.input as { command?: unknown }).command ?? "");
-            const reasons = detectHazards(command);
+            const reasons = detectHazards(command, loadSafetyReadOnlyPaths());
             if (reasons.length === 0) return undefined;
 
             const priorExplanationRequest = getExplanationRequest(explanationRequests, command);
-            const action = await chooseDangerousCommandAction(command, reasons, priorExplanationRequest, ctx);
+            const action = await chooseDangerousCommandAction(pi, command, reasons, priorExplanationRequest, ctx);
             if (action === "allow") return undefined;
 
             if (action === "explain") {
@@ -486,6 +710,7 @@ export default function (pi: ExtensionAPI) {
 
             const reasons = ["writing system files outside ~/.pi"];
             const allowed = await confirmDangerousOperation(
+                pi,
                 "Allow writing to a system file?",
                 `Tool: ${event.toolName}\nPath: ${toolPath}`,
                 reasons,
@@ -500,11 +725,11 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("user_bash", async (event, ctx) => {
-        const reasons = detectHazards(event.command);
+        const reasons = detectHazards(event.command, loadSafetyReadOnlyPaths());
         if (reasons.length === 0) return undefined;
 
         const priorExplanationRequest = getExplanationRequest(explanationRequests, event.command);
-        const action = await chooseDangerousCommandAction(event.command, reasons, priorExplanationRequest, ctx);
+        const action = await chooseDangerousCommandAction(pi, event.command, reasons, priorExplanationRequest, ctx);
         if (action === "allow") return undefined;
 
         const output = action === "explain"
