@@ -27,7 +27,7 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 - `extensions/safety/index.ts` detects risky bash, edit, and write operations.
 - Dangerous operations require confirmation before running.
 - A deliberately small, workspace-scoped read-only shell grammar (`find`, `rg`, read-only Git/GitHub queries, shell tests, and safe output piping) runs without confirmation; ambiguous syntax, external paths, and effectful commands remain gated.
-- Optional portable home-directory roots can be added in `~/.pi/safety-allowed-paths.json`; safety reads it for each permission check, it is never created automatically, and mutations remain gated:
+- Optional portable home-directory roots can be added in `~/.pi/safety.json`; safety reads it for each permission check, it is never created automatically, and mutations remain gated:
 
   ```json
   { "version": 1, "readOnlyPaths": ["$HOME/.pi", "$HOME/Development"] }

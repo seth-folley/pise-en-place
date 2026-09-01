@@ -7,7 +7,7 @@ import { isReadOnlyWorkspaceCommand, loadSafetyReadOnlyPaths } from "../extensio
 describe("safety allowed read-only paths config", () => {
     it("is opt-in and expands portable $HOME paths", () => {
         const directory = mkdtempSync(path.join(tmpdir(), "pise-safety-config-"));
-        const configPath = path.join(directory, "safety-allowed-paths.json");
+        const configPath = path.join(directory, "safety.json");
         const home = path.join(directory, "home");
 
         try {
@@ -38,7 +38,7 @@ describe("safety allowed read-only paths config", () => {
 
     it("fails closed for invalid config", () => {
         const directory = mkdtempSync(path.join(tmpdir(), "pise-safety-config-"));
-        const configPath = path.join(directory, "safety-allowed-paths.json");
+        const configPath = path.join(directory, "safety.json");
 
         try {
             writeFileSync(configPath, JSON.stringify({ version: 2, readOnlyPaths: ["$HOME"] }));

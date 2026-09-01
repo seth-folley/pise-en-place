@@ -53,7 +53,7 @@ const protectedSystemRoots = [
 ];
 
 const piHome = path.resolve(homedir(), ".pi");
-const safetyAllowedPathsConfigName = "safety-allowed-paths.json";
+const safetyConfigName = "safety.json";
 
 type SafetyAllowedPathsConfig = {
     version: 1;
@@ -136,9 +136,9 @@ function normalizeConfiguredReadOnlyPath(candidate: unknown, homeDirectory: stri
     return normalized;
 }
 
-/** Reads opt-in, portable home-directory roots from ~/.pi/safety-allowed-paths.json. */
+/** Reads opt-in, portable home-directory roots from ~/.pi/safety.json. */
 export function loadSafetyReadOnlyPaths(
-    configPath = path.join(homedir(), ".pi", safetyAllowedPathsConfigName),
+    configPath = path.join(homedir(), ".pi", safetyConfigName),
     homeDirectory = homedir(),
 ): string[] {
     let parsed: unknown;
@@ -442,7 +442,7 @@ function isReadOnlyWorkspaceSegment(segment: string[], allowedRoots: string[]): 
 
 /**
  * Allows a deliberately small, read-only shell subset for workspace research
- * and opt-in paths from ~/.pi/safety-allowed-paths.json. Ambiguous shell syntax,
+ * and opt-in paths from ~/.pi/safety.json. Ambiguous shell syntax,
  * external paths, and commands with execution or write capabilities are rejected.
  */
 export function isReadOnlyWorkspaceCommand(
