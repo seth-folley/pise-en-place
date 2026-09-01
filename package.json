@@ -28,9 +28,9 @@
   },
   "homepage": "https://github.com/seth-folley/pise-en-place#readme",
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.75.4",
-    "@earendil-works/pi-coding-agent": "^0.75.4",
-    "@earendil-works/pi-tui": "^0.75.4",
+    "@earendil-works/pi-ai": "^0.84.3",
+    "@earendil-works/pi-coding-agent": "^0.84.3",
+    "@earendil-works/pi-tui": "^0.84.3",
     "@types/node": "^25.9.1",
     "typebox": "^1.1.38",
     "typescript": "^6.0.3",

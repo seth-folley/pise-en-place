@@ -1,0 +1,24 @@
+version: 1
+name: replace-with-eval-name
+workspace: ../path/to/workspace
+
+agent:
+  harness: pi
+  model: provider/model-id
+  # thinking: medium
+  # tools: [read, bash, edit, write]
+
+# Optional global whole-file replacements. Sources resolve from this YAML;
+# targets resolve from the workspace and may be absent.
+# replacements:
+#   - source: fixtures/example.txt
+#     target: path/in/workspace/example.txt
+
+variants:
+  first-scenario:
+    prompt: |
+      Write the ordinary user message for this scenario.
+
+  second-scenario:
+    prompt: |
+      Write an independent user message for a meaningfully different scenario.

@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pise-en-place.local/schemas/skill-eval-review-v1.json",
+  "title": "Skill evaluation semantic review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "rubricVersion",
+    "generatedAt",
+    "run",
+    "evidenceBoundary",
+    "objective",
+    "overall",
+    "evidenceIntegrity",
+    "variants",
+    "crossVariant",
+    "limitations"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "rubricVersion": { "const": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "operationalStatus", "path"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "operationalStatus": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidenceBoundary": { "const": "retained_artifacts" },
+    "objective": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "source"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "source": { "enum": ["authored", "inferred"] }
+      }
+    },
+    "overall": { "$ref": "#/$defs/outcome" },
+    "evidenceIntegrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "findings"],
+      "properties": {
+        "status": { "enum": ["complete", "partial", "insufficient"] },
+        "findings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "variants": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/variant" }
+    },
+    "crossVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["patterns", "recommendations"],
+      "properties": {
+        "patterns": { "type": "array", "items": { "type": "string" } },
+        "recommendations": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "limitations": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "citation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "description"],
+      "properties": {
+        "artifact": { "type": "string", "minLength": 1 },
+        "locator": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "confidence", "summary"],
+      "properties": {
+        "outcome": {
+          "enum": [
+            "meets_expectations",
+            "does_not_meet_expectations",
+            "mixed",
+            "inconclusive",
+            "not_run"
+          ]
+        },
+        "confidence": { "enum": ["high", "medium", "low"] },
+        "summary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "expectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text", "source", "status", "finding", "citations"],
+      "properties": {
+        "type": { "enum": ["expected", "prohibited", "shared"] },
+        "text": { "type": "string", "minLength": 1 },
+        "source": { "enum": ["authored", "inferred"] },
+        "status": { "enum": ["met", "partially_met", "not_met", "inconclusive", "not_applicable"] },
+        "finding": { "type": "string", "minLength": 1 },
+        "citations": { "type": "array", "items": { "$ref": "#/$defs/citation" } }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "finding", "citations"],
+      "properties": {
+        "id": {
+          "enum": [
+            "outcome_correctness",
+            "guidance_adherence",
+            "investigation",
+            "change_quality",
+            "verification",
+            "final_response",
+            "efficiency",
+            "safety_policy",
+            "evidence_sufficiency"
+          ]
+        },
+        "status": { "enum": ["met", "partially_met", "not_met", "inconclusive", "not_applicable"] },
+        "finding": { "type": "string", "minLength": 1 },
+        "citations": { "type": "array", "items": { "$ref": "#/$defs/citation" } }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wallTimeMs", "activeTimeMs", "dialogWaitMs", "inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "cost", "toolCalls", "toolFailures", "changedFiles", "insertions", "deletions"],
+      "properties": {
+        "wallTimeMs": { "type": "number", "minimum": 0 },
+        "activeTimeMs": { "type": "number", "minimum": 0 },
+        "dialogWaitMs": { "type": "number", "minimum": 0 },
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "cacheReadTokens": { "type": "integer", "minimum": 0 },
+        "cacheWriteTokens": { "type": "integer", "minimum": 0 },
+        "cost": { "oneOf": [{ "type": "number", "minimum": 0 }, { "const": "unavailable" }] },
+        "toolCalls": { "type": "integer", "minimum": 0 },
+        "toolFailures": { "type": "integer", "minimum": 0 },
+        "changedFiles": { "type": "integer", "minimum": 0 },
+        "insertions": { "type": "integer", "minimum": 0 },
+        "deletions": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "executionStatus", "outcome", "confidence", "summary", "expectations", "criteria", "strengths", "concerns", "recommendations"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+        "executionStatus": { "type": "string", "minLength": 1 },
+        "outcome": {
+          "enum": ["meets_expectations", "partially_meets_expectations", "does_not_meet_expectations", "inconclusive", "not_run"]
+        },
+        "confidence": { "enum": ["high", "medium", "low"] },
+        "summary": { "type": "string", "minLength": 1 },
+        "metrics": { "$ref": "#/$defs/metrics" },
+        "expectations": { "type": "array", "items": { "$ref": "#/$defs/expectation" } },
+        "criteria": { "type": "array", "items": { "$ref": "#/$defs/criterion" } },
+        "strengths": { "type": "array", "items": { "type": "string" } },
+        "concerns": { "type": "array", "items": { "type": "string" } },
+        "recommendations": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

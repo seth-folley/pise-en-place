@@ -1,0 +1,19 @@
+version: 1
+objective: >
+  Describe the behavior this evaluation is intended to assess.
+
+# Optional expectations that apply to every variant.
+sharedExpectations:
+  - Follow applicable project guidance.
+  - Avoid unrelated changes.
+
+# Variant IDs must match the sibling eval YAML.
+variants:
+  first-scenario:
+    expected:
+      - Describe the observable result that should occur.
+    prohibited:
+      - Describe an observable result that would violate the evaluation intent.
+    evidenceHints:
+      - final response
+      - Git patch

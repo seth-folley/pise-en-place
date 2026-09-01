@@ -42,6 +42,18 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 - `/update-skills --interactive` lets the user choose updates, pins accepted refs, and syncs skills.
 - `/update-skills` syncs skills through the shared shell scripts.
 
+### Skill evaluation
+
+- `/skill:skill-eval-creator` guides agents through inspecting, proposing, confirming, and writing simplified eval YAML files without running them.
+- `/skill-eval validate <eval.yaml>` strictly parses the skill-evaluation schema and checks the workspace and replacement source files.
+- `/skill-eval run <eval.yaml>` executes variants sequentially in disposable Git workspaces with a full-screen monitor, retained Pi sessions/evidence, and Markdown/HTML reports.
+- Stopped runs retain their exact failure phase, structured error chains/subprocess output, final lifecycle event, artifact completeness, and diagnostic hints in `failure.json`.
+- An optional same-basename `<eval>.review.yaml` sidecar records reviewer-only objectives and expectations; it is validated and retained but never submitted to the evaluated agent.
+- `/skill-eval review <run-id|path|latest>` resolves settled retained evidence and dispatches `/skill:skill-eval-reviewer` in the current session.
+- The reviewer applies a common ordinal rubric and writes validated `review.json` plus deterministic `review.html` under the run's versioned `reviews/` directory.
+- Validation does not inspect replacement targets, Git state, models, tools, symlinks, or project contents.
+- See `docs/skill-evaluation.md` for usage and `docs/skill-evaluation-implementation-plan.md` for the detailed evidence and monitor contract.
+
 ### UI helpers
 
 - `extensions/ui/dracula-status-line.ts` adds the Dracula/minimal status line with branch, model, token, cost, context, and extension status details.
