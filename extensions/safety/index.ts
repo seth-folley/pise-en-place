@@ -170,20 +170,33 @@ function isProtectedSystemPath(candidate: string): boolean {
     return protectedSystemRoots.some((root) => isPathInRoot(normalized, root));
 }
 
-function commandHasProtectedSystemWrite(command: string): boolean {
+export function commandHasProtectedSystemWrite(command: string): boolean {
     const writePatterns = [
-        /(?:^|\s)(?:\d*>|\d*>>|&>|>\|)\s*("[^"]+"|'[^']+'|\/\S+|~\/\S+)/g,
-        /(?:^|[;&|()\s])tee\s+(?:-[a-zA-Z]+\s+)*("[^"]+"|'[^']+'|\/\S+|~\/\S+)/g,
-        /(?:^|[;&|()\s])(?:cp|mv|install|touch|mkdir)\b[^;&|]*\s("[^"]+"|'[^']+'|\/\S+|~\/\S+)/g,
-        /(?:^|[;&|()\s])(?:sed|perl)\b[^;&|]*\s-i(?:\s|\b)[^;&|]*\s("[^"]+"|'[^']+'|\/\S+|~\/\S+)/g,
+        {
+            pattern: /(?:^|\s)(?:\d*>|\d*>>|&>|>\|)\s*("[^"]+"|'[^']+'|\/\S+|~\/\S+)/g,
+            allowsNullDevice: true,
+        },
+        {
+            pattern: /(?:^|[;&|()\s])tee\s+(?:-[a-zA-Z]+\s+)*("[^"]+"|'[^']+'|\/\S+|~\/\S+)/g,
+            allowsNullDevice: false,
+        },
+        {
+            pattern: /(?:^|[;&|()\s])(?:cp|mv|install|touch|mkdir)\b[^;&|]*\s("[^"]+"|'[^']+'|\/\S+|~\/\S+)/g,
+            allowsNullDevice: false,
+        },
+        {
+            pattern: /(?:^|[;&|()\s])(?:sed|perl)\b[^;&|]*\s-i(?:\s|\b)[^;&|]*\s("[^"]+"|'[^']+'|\/\S+|~\/\S+)/g,
+            allowsNullDevice: false,
+        },
     ];
 
-    return writePatterns.some((pattern) => {
+    return writePatterns.some(({ pattern, allowsNullDevice }) => {
         pattern.lastIndex = 0;
         let match: RegExpExecArray | null;
         while ((match = pattern.exec(command)) !== null) {
             const destination = match[1];
-            if (destination && isProtectedSystemPath(destination)) return true;
+            const isNullDevice = normalizeCandidatePath(destination ?? "") === "/dev/null";
+            if (destination && (!allowsNullDevice || !isNullDevice) && isProtectedSystemPath(destination)) return true;
         }
         return false;
     });

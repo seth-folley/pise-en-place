@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isReadOnlyWorkspaceCommand } from "../extensions/safety/index.ts";
+import { commandHasProtectedSystemWrite, isReadOnlyWorkspaceCommand } from "../extensions/safety/index.ts";
 
 const workspace = "/tmp/pise-safety-workspace";
 
@@ -12,6 +12,13 @@ describe("read-only workspace shell commands", () => {
         expect(isReadOnlyWorkspaceCommand("rg -n --hidden 'dox-finish-pr' .agents", workspace)).toBe(true);
         expect(isReadOnlyWorkspaceCommand("git status --short --branch", workspace)).toBe(true);
         expect(isReadOnlyWorkspaceCommand("gh label list --search ciautorun --limit 10", workspace)).toBe(true);
+    });
+
+    it("does not treat null-device redirects as protected system writes", () => {
+        expect(commandHasProtectedSystemWrite("git show abc:SKILL.md 2>/dev/null || git show def:SKILL.md")).toBe(false);
+        expect(commandHasProtectedSystemWrite("git show abc:SKILL.md >/dev/null")).toBe(false);
+        expect(commandHasProtectedSystemWrite("git show abc:SKILL.md > /etc/skill.md")).toBe(true);
+        expect(commandHasProtectedSystemWrite("touch /dev/null")).toBe(true);
     });
 
     it("rejects ambiguous, external, or effectful commands", () => {

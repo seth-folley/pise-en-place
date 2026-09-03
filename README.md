@@ -69,6 +69,21 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 - `extensions/ui/interactive-agent-questions.ts` exposes the `ask_user` tool for guided TUI questions.
 - Safety permission prompts and `ask_user` questions send a rich attention notification to their originating Supacode surface; the notifier respects Supacode's notification settings and is inert in other terminals.
 
+### Subagent orchestration
+
+- `extensions/orchestration/subagent/` gives the main agent a `subagent` tool for isolated **scout**, **researcher**, and **reviewer** work. It supports one task or independent parallel tasks (up to 8 tasks, 4 at once); package-owned definitions keep role behavior consistent.
+- Subagents are read-only by default. The reviewer can use Bash only for read-only Git inspection.
+- Configure defaults and per-role model/thinking overrides in global `~/.pi/agent/settings.json` and optional project `.pi/settings.json`; project values override global values:
+
+  ```json
+  {
+    "subagents": {
+      "defaults": { "model": "openai-codex/gpt-5.4", "thinking": "medium" },
+      "agents": { "scout": { "model": "openai-codex/gpt-5.4-mini", "thinking": "low" } }
+    }
+  }
+  ```
+
 ### Productivity helpers
 
 - `extensions/productivity/current-pr.ts` adds `/pr` and the `get_current_branch_pr` tool for GitHub PR lookup via `gh`.
