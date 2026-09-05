@@ -63,8 +63,8 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 
 ### UI helpers
 
-- `extensions/ui/dracula-status-line.ts` adds the Dracula/minimal status line with branch, model, token, cost, context, and extension status details.
-- `/statusline` cycles status line modes; `/statusline-colors` toggles context color examples.
+- `extensions/ui/dracula-status-line.ts` adds the Dracula/minimal status line with branch, model, token, cost, context, and extension status details. A `~` context percentage is a retained estimate used while Codex tool-use usage metadata is incomplete; after compaction it shows `--%` until Pi reports reliable post-compaction usage.
+- `/statusline` cycles status line modes; `/statusline-colors` toggles context color examples. `/statusline debug` toggles an in-memory trace of Pi context-usage readings and shows the samples when disabled.
 - `extensions/ui/response-time.ts` tracks response timing; `/response-time` toggles reporting.
 - `extensions/ui/interactive-agent-questions.ts` exposes the `ask_user` tool for guided TUI questions.
 - Safety permission prompts and `ask_user` questions send a rich attention notification to their originating Supacode surface; the notifier respects Supacode's notification settings and is inert in other terminals.
@@ -72,7 +72,8 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 ### Subagent orchestration
 
 - `extensions/orchestration/subagent/` gives the main agent a `subagent` tool for isolated **scout**, **researcher**, and **reviewer** work. It supports one task or independent parallel tasks (up to 8 tasks, 4 at once); package-owned definitions keep role behavior consistent.
-- Subagents are read-only by default. The reviewer can use Bash only for read-only Git inspection.
+- Subagents are read-only by default. The reviewer can use Bash only for read-only Git inspection. The tool row shows a compact parallel/completion summary and expands to each role's exact task and status. While active, an above-editor activity tray shows each role, live tool activity, and completion/failure state; it remains visible until the parent agent finishes its turn.
+- Each subagent also saves an isolated native Pi session under `~/.pi/agent/subagent-sessions/<parent-session-id>/`. Run `/subagents` in the parent session to list retained children and copy the `pi --session-dir … --session …` command needed to inspect one. Child sessions are linked to the parent without adding their full transcripts to the parent context. Their usage session inherits the parent's active usage tags and adds `subagent` plus `subagent-<role>`.
 - Configure defaults and per-role model/thinking overrides in global `~/.pi/agent/settings.json` and optional project `.pi/settings.json`; project values override global values:
 
   ```json
@@ -94,6 +95,7 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 - `extensions/productivity/local-share.ts` adds `/share-local` for local HTML transcript export.
 - `extensions/productivity/markdown-output.ts` adds `/md <path>` for rendering markdown file contents.
 - `extensions/productivity/copy-session-id.ts` adds `alt+s` to copy the current session ID.
+- `extensions/productivity/cut-input.ts` adds `ctrl+shift+x` to cut the current input and `alt+/` to copy it (when present) and begin a slash command.
 - `extensions/productivity/roadmap-writer.ts` adds `/roadmap <request>` to update `ROADMAP.md` through an isolated Pi process.
 
 ### Theme

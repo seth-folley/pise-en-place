@@ -1,30 +1,35 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import type { Message } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getUsageSessionState, inheritedUsageTagsEnvironmentVariable } from "../../../src/shared/usage-session.ts";
 import { Type } from "typebox";
 import { getSubagentDefinitions, type SubagentDefinition } from "./agents.ts";
 import { loadSubagentConfig, type ResolvedSubagentConfig } from "./config.ts";
+import { createSubagentWidget } from "./widget.ts";
+import { formatSubagentSessionRuns, getSubagentSessionRuns, subagentSessionEntryType, type SubagentSessionRun } from "./sessions.ts";
+import { renderSubagentCall, renderSubagentResult, type SubagentToolDetails, type SubagentToolResult } from "./tool-renderer.ts";
 
 const maxParallelTasks = 8;
 const maxConcurrency = 4;
 const outputCap = 50 * 1024;
 
 type Task = { agent: string; task: string };
-type Result = {
-    agent: string;
-    task: string;
+type Result = SubagentToolResult & {
     config?: ResolvedSubagentConfig;
     output: string;
     stderr: string;
-    exitCode: number;
-    stopReason?: string;
+    childSessionId?: string;
+    childSessionDir?: string;
+    startedAt?: string;
 };
 
-type Details = { mode: "single" | "parallel"; results: Result[] };
+type Details = SubagentToolDetails;
 
 const taskSchema = Type.Object({
     agent: Type.String({ description: "Package-owned subagent name: scout, researcher, or reviewer." }),
@@ -69,52 +74,80 @@ async function runSubagent(
     task: string,
     cwd: string,
     config: ResolvedSubagentConfig,
+    sessionDir: string,
+    inheritedTags: string[],
     signal: AbortSignal | undefined,
     update: (result: Result) => void,
 ): Promise<Result> {
     const promptDir = await mkdtemp(path.join(os.tmpdir(), "pise-subagent-"));
+    const childSessionId = randomUUID();
+    await mkdir(sessionDir, { recursive: true });
     const promptPath = path.join(promptDir, `${definition.name}.md`);
     await writeFile(promptPath, definition.systemPrompt, { mode: 0o600 });
-    const result: Result = { agent: definition.name, task, config, output: "", stderr: "", exitCode: -1 };
+    const result: Result = {
+        agent: definition.name,
+        task,
+        config,
+        output: "",
+        stderr: "",
+        exitCode: -1,
+        childSessionId,
+        childSessionDir: sessionDir,
+        startedAt: new Date().toISOString(),
+    };
 
     try {
         const args = [
-            "--mode", "json", "--print", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+            "--mode", "json", "--print", "--session-dir", sessionDir, "--session-id", childSessionId, "--name", `subagent: ${definition.name}`,
+            "--no-extensions", "--extension", path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../usage/index.ts"),
+            "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
             "--model", config.model, "--thinking", config.thinking, "--tools", definition.tools.join(","),
             "--append-system-prompt", promptPath, `Task: ${task}`,
         ];
         const child = invocation(args);
         await new Promise<void>((resolve) => {
-            const process = spawn(child.command, child.args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+            const childProcess = spawn(child.command, child.args, {
+                cwd,
+                shell: false,
+                stdio: ["ignore", "pipe", "pipe"],
+                env: { ...process.env, [inheritedUsageTagsEnvironmentVariable]: JSON.stringify([...inheritedTags, "subagent", `subagent-${definition.name}`]) },
+            });
             let stdout = "";
             let aborted = false;
             const consumeLine = (line: string) => {
                 try {
-                    const event = JSON.parse(line) as { type?: string; message?: Message };
+                    const event = JSON.parse(line) as { type?: string; message?: Message; toolName?: string };
+                    if (event.type === "tool_execution_start" && event.toolName) {
+                        result.activity = event.toolName;
+                        update(result);
+                        return;
+                    }
                     if (event.type !== "message_end" || !event.message || event.message.role !== "assistant") return;
                     const next = finalOutput([event.message]);
                     result.output = next.output;
                     result.stopReason = next.stopReason;
+                    result.activity = "finalizing response";
                     update(result);
                 } catch {
                     // JSON mode may emit diagnostics; stderr retains process diagnostics.
                 }
             };
-            process.stdout.on("data", (chunk) => {
+            childProcess.stdout.on("data", (chunk) => {
                 stdout += chunk.toString();
                 const lines = stdout.split("\n");
                 stdout = lines.pop() ?? "";
                 lines.forEach(consumeLine);
             });
-            process.stderr.on("data", (chunk) => { result.stderr += chunk.toString(); });
-            process.on("error", (error) => { result.stderr += error.message; });
-            process.on("close", (code) => {
+            childProcess.stderr.on("data", (chunk) => { result.stderr += chunk.toString(); });
+            childProcess.on("error", (error) => { result.stderr += error.message; });
+            childProcess.on("close", (code) => {
                 if (stdout.trim()) consumeLine(stdout);
                 result.exitCode = aborted ? 1 : (code ?? 1);
                 if (aborted) result.stderr ||= "Subagent aborted.";
+                result.activity = result.exitCode === 0 && result.stopReason !== "error" ? "complete" : "failed";
                 resolve();
             });
-            const abort = () => { aborted = true; process.kill("SIGTERM"); };
+            const abort = () => { aborted = true; childProcess.kill("SIGTERM"); };
             if (signal?.aborted) abort();
             else signal?.addEventListener("abort", abort, { once: true });
         });
@@ -135,12 +168,36 @@ async function mapConcurrent<T>(items: T[], fn: (item: T, index: number) => Prom
 }
 
 export default function (pi: ExtensionAPI) {
+    const widgetRuns = new Map<string, Result[]>();
+
+    const renderWidget = (ctx: any) => {
+        if (!ctx.hasUI) return;
+        const items = [...widgetRuns.values()].flat();
+        ctx.ui.setWidget("pise-subagents", items.length ? createSubagentWidget(items) : undefined);
+    };
+
+    // Keep completed work visible while the main agent consumes its results; remove it once the parent turn settles.
+    pi.on("agent_settled", (_event, ctx) => {
+        widgetRuns.clear();
+        renderWidget(ctx);
+    });
+
+    pi.registerCommand("subagents", {
+        description: "List retained subagent sessions for this parent session",
+        handler: async (_args, ctx) => {
+            const runs = getSubagentSessionRuns(ctx.sessionManager.getEntries());
+            ctx.ui.notify(formatSubagentSessionRuns(runs), "info");
+        },
+    });
+
     pi.registerTool({
         name: "subagent",
         label: "Subagent",
         description: "Delegate focused, isolated read-only work to package-owned scout, researcher, or reviewer subagents. Use agent + task for one task or tasks for independent parallel work.",
         parameters,
-        async execute(_toolCallId, params, signal, onUpdate, ctx) {
+        renderCall: renderSubagentCall,
+        renderResult: renderSubagentResult,
+        async execute(toolCallId, params, signal, onUpdate, ctx) {
             const single = params.agent && params.task ? [{ agent: params.agent, task: params.task }] : undefined;
             const tasks = params.tasks?.length ? params.tasks : single;
             if (!tasks || (params.tasks?.length && single)) {
@@ -155,17 +212,42 @@ export default function (pi: ExtensionAPI) {
                 return { content: [{ type: "text", text: `Unknown subagent(s): ${unknown.join(", ")}. Available: ${[...definitions.keys()].join(", ")}.` }], details: { mode: tasks.length > 1 ? "parallel" : "single", results: [] } satisfies Details, isError: true };
             }
 
-            const results: Result[] = tasks.map(({ agent, task }) => ({ agent, task, output: "", stderr: "", exitCode: -1 }));
+            const parentSessionId = ctx.sessionManager.getSessionId();
+            const childSessionDir = path.join(getAgentDir(), "subagent-sessions", parentSessionId);
+            const inheritedTags = getUsageSessionState(ctx.sessionManager.getBranch())?.tags ?? [];
+            const results: Result[] = tasks.map(({ agent, task }) => ({ agent, task, output: "", stderr: "", exitCode: -1, activity: "starting" }));
+            widgetRuns.set(toolCallId, results);
+            renderWidget(ctx);
             const mode = tasks.length > 1 ? "parallel" as const : "single" as const;
-            const reportProgress = () => onUpdate?.({
-                content: [{ type: "text", text: mode === "parallel" ? `Subagents: ${results.filter((result) => result.exitCode !== -1).length}/${results.length} complete` : results[0].output || "(running...)" }],
-                details: { mode, results: [...results] } satisfies Details,
-            });
+            const reportProgress = () => {
+                renderWidget(ctx);
+                onUpdate?.({
+                    content: [{ type: "text", text: mode === "parallel" ? `Subagents: ${results.filter((result) => result.exitCode !== -1).length}/${results.length} complete` : results[0].output || "(running...)" }],
+                    details: { mode, results: [...results] } satisfies Details,
+                });
+            };
 
             await mapConcurrent(tasks, async (task, index) => {
                 const definition = definitions.get(task.agent)!;
                 const config = loadSubagentConfig(ctx.cwd, definition.name, definition.defaults);
-                results[index] = await runSubagent(definition, task.task, ctx.cwd, config, signal, (partial) => { results[index] = { ...partial }; reportProgress(); });
+                results[index] = await runSubagent(definition, task.task, ctx.cwd, config, childSessionDir, inheritedTags, signal, (partial) => { results[index] = { ...partial }; reportProgress(); });
+                const result = results[index];
+                if (result.childSessionId && result.childSessionDir && result.startedAt) {
+                    const run: SubagentSessionRun = {
+                        version: 1,
+                        parentSessionId,
+                        toolCallId,
+                        agent: result.agent,
+                        task: result.task,
+                        childSessionId: result.childSessionId,
+                        sessionDir: result.childSessionDir,
+                        startedAt: result.startedAt,
+                        completedAt: new Date().toISOString(),
+                        exitCode: result.exitCode,
+                        ...(result.stopReason ? { stopReason: result.stopReason } : {}),
+                    };
+                    pi.appendEntry(subagentSessionEntryType, run);
+                }
                 reportProgress();
             });
 

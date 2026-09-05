@@ -23,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { mergeUsageProjectAttribution, normalizeGitRemote, normalizeUsageTags, readUsageConfig, type UsageConfig } from "../../src/shared/usage-attribution.ts";
+import { getInheritedUsageTags, getUsageSessionState, usageSessionCustomType, type UsageSessionProject, type UsageSessionState } from "../../src/shared/usage-session.ts";
 
 const execFileAsync = promisify(execFile);
 const ledgerDir = path.join(os.homedir(), ".pi", "agent", "usage");
@@ -33,13 +34,7 @@ const schemaVersion = 1;
 type UsageRange = "today" | "week" | "month" | "lifetime";
 type UsageMode = "summary" | "report" | "project" | "model" | "skills" | "clear" | "tag";
 
-type ProjectInfo = {
-	name: string | null;
-	gitRemote: string | null;
-	gitRoot: string | null;
-	gitCommonDir: string | null;
-	gitBranch?: string | null;
-};
+type ProjectInfo = UsageSessionProject;
 
 type UsageLedgerRecord = {
 	version: 1;
@@ -143,12 +138,7 @@ type SessionEntry = {
 	data?: unknown;
 };
 
-type UsageTagState = {
-	version: 1;
-	tags: string[];
-};
-
-const usageTagCustomType = "usage-tags";
+const legacyUsageTagCustomType = "usage-tags";
 
 type SkillReadRecord = {
 	version: 1;
@@ -422,8 +412,12 @@ function inRange(record: UsageLedgerRecord, range: UsageRange): boolean {
 
 // Reports group projects by the most stable git identity available. This keeps
 // separate worktrees for the same remote from showing up as separate projects.
+function getProjectKeyFor(project: ProjectInfo, cwd: string | null): string {
+	return project.gitRemote ?? project.gitCommonDir ?? project.gitRoot ?? cwd ?? "unknown";
+}
+
 function getProjectKey(record: UsageLedgerRecord): string {
-	return record.project.gitRemote ?? record.project.gitCommonDir ?? record.project.gitRoot ?? record.cwd ?? "unknown";
+	return getProjectKeyFor(record.project, record.cwd);
 }
 
 function getProjectLabels(record: UsageLedgerRecord): string[] {
@@ -680,7 +674,7 @@ function buildUsageReport(records: UsageLedgerRecord[], options: { range: UsageR
 		providers: sortedReportGroups(providers),
 		models: sortedReportGroups(models),
 		projects: sortedReportGroups(projects),
-		...(options.project || options.branch ? { tags: tagBreakdown(filtered) } : {}),
+		tags: tagBreakdown(filtered),
 		topRecords: filtered
 			.filter((record) => typeof record.usage.totalCost === "number")
 			.sort((a, b) => (b.usage.totalCost ?? 0) - (a.usage.totalCost ?? 0) || b.usage.totalTokens - a.usage.totalTokens)
@@ -807,7 +801,7 @@ function formatHelp(json: boolean): string {
 			{ command: "/usage project", description: "Select a recorded project and show lifetime usage" },
 			{ command: "/usage project --list", description: "List recorded projects" },
 			{ command: "/usage project <project>", description: "Show lifetime usage overview, branch breakdown, and available tags" },
-			{ command: "/usage project <project> --branch", description: "Select a recorded branch and show project usage and available tags for that branch" },
+			{ command: "/usage project <project> --branch", description: "Show usage for the current branch and its available tags" },
 			{ command: "/usage model --list", description: "List recorded models" },
 			{ command: "/usage model <model>", description: "Show lifetime usage for a model" },
 			{ command: "/usage skills [range]", description: "Show skill usage counts" },
@@ -822,7 +816,7 @@ function formatHelp(json: boolean): string {
 			{ option: "--project <project>", description: "Filter a time range or skill report by project" },
 			{ option: "--project", description: "With /usage skills, group skill usage by project" },
 			{ option: "--model <model>", description: "Filter a time range by model" },
-			{ option: "--branch [branch]", description: "Filter project usage by local git branch, or select one interactively when omitted" },
+			{ option: "--branch [branch]", description: "Filter by local git branch; without a value, defaults to the current workspace project and branch" },
 			{ option: "--list", description: "List values for project/model/tag commands" },
 			{ option: "--json", description: "Emit machine-readable JSON" },
 			{ option: "--visual", description: "With /usage report, show static horizontal bar charts" },
@@ -1060,6 +1054,21 @@ function getCwd(ctx: ExtensionContext): string | null {
 	return ctx.cwd ?? (ctx.sessionManager.getCwd?.() as string | undefined) ?? process.cwd();
 }
 
+// Match the attribution used for new ledger records so a bare --branch filters
+// the project currently open in Pi, including any local project override.
+async function getCurrentUsageProject(ctx: ExtensionContext): Promise<{ project: ProjectInfo; cwd: string | null }> {
+	const cwd = getCwd(ctx);
+	if (!cwd) return { project: { name: null, gitRemote: null, gitRoot: null, gitCommonDir: null, gitBranch: null }, cwd: null };
+
+	const project = await getProjectInfo(cwd);
+	try {
+		return { project: applyProjectAttributionOverride(project, cwd, await readUsageConfig(cwd)), cwd };
+	} catch (error: any) {
+		console.warn(`Usage tracker ignored local usage config: ${error?.message ?? String(error)}`);
+		return { project, cwd };
+	}
+}
+
 function isoFromTimestamp(timestamp: unknown): string {
 	if (typeof timestamp === "number" && Number.isFinite(timestamp)) return new Date(timestamp).toISOString();
 	if (typeof timestamp === "string") {
@@ -1096,9 +1105,9 @@ function findSessionEntryId(ctx: ExtensionContext, message: any): string | null 
 
 // Build the persistent record from Pi's assistant message. Project metadata is
 // filled in after this by getProjectInfo because it requires async git commands.
-function buildRecord(ctx: ExtensionContext, message: any, tags: string[]): UsageLedgerRecord {
-	const cwd = getCwd(ctx);
-	const sessionFile = ctx.sessionManager.getSessionFile?.() ?? null;
+function buildRecord(ctx: ExtensionContext, message: any, usageSession: UsageSessionState): UsageLedgerRecord {
+	const cwd = usageSession.cwd;
+	const sessionFile = usageSession.sessionFile;
 	const sessionEntryId = findSessionEntryId(ctx, message);
 	const timestamp = isoFromTimestamp(message.timestamp);
 	const id = `${sessionFile ?? "ephemeral"}:${sessionEntryId ?? timestamp}`;
@@ -1117,8 +1126,8 @@ function buildRecord(ctx: ExtensionContext, message: any, tags: string[]): Usage
 		sessionFile,
 		sessionEntryId,
 		cwd,
-		project: { name: null, gitRemote: null, gitRoot: null, gitCommonDir: null, gitBranch: null },
-		...(tags.length ? { tags: [...tags] } : {}),
+		project: usageSession.project,
+		...(usageSession.tags.length ? { tags: [...usageSession.tags] } : {}),
 		provider: message.provider ?? (ctx as any).model?.provider ?? null,
 		model: message.model ?? (ctx as any).model?.id ?? null,
 		api: message.api ?? (ctx as any).model?.api ?? null,
@@ -1175,12 +1184,6 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 		return;
 	}
 
-	if ((parsed.mode === "summary" || parsed.mode === "report") && parsed.selectBranch) {
-		const error = "Interactive branch selection is only supported with /usage project <project> --branch.";
-		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error }, null, 2) : error, parsed.json);
-		return;
-	}
-
 	if (parsed.mode === "clear") {
 		if (!parsed.yes) {
 			if (!ctx.hasUI) {
@@ -1227,6 +1230,11 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 
 	const { records, skippedLines } = await readLedgerRecords();
 
+	if (parsed.selectBranch && !parsed.project) {
+		const current = await getCurrentUsageProject(ctx);
+		parsed.project = getProjectKeyFor(current.project, current.cwd);
+	}
+
 	if (parsed.mode === "project" && parsed.list) {
 		const projects = listProjects(records);
 		await notifyOutput(
@@ -1264,7 +1272,7 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 		parsed.project = selected;
 	}
 
-	if (parsed.branch && !parsed.project) {
+	if ((parsed.branch || parsed.selectBranch) && !parsed.project) {
 		const error = "--branch requires --project or /usage project <project>.";
 		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error, skippedLines }, null, 2) : error, parsed.json);
 		return;
@@ -1276,20 +1284,15 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 		return;
 	}
 
-	if (parsed.mode === "project" && parsed.project && parsed.selectBranch && !parsed.branch) {
-		const branches = groupProjectRecordsByBranch(records, parsed.project).map((entry) => entry.label);
-		if (!ctx.hasUI) {
-			const error = "Branch selection requires an interactive UI. Use /usage project <project> --branch <branch> instead.";
-			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error, branches, skippedLines }, null, 2) : error, parsed.json);
+	if (parsed.selectBranch && !parsed.branch) {
+		const cwd = getCwd(ctx);
+		const branch = cwd ? await git(cwd, ["branch", "--show-current"]) : null;
+		if (!branch) {
+			const error = "Unable to determine the current git branch. Supply one with --branch <branch>.";
+			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error, skippedLines }, null, 2) : error, parsed.json);
 			return;
 		}
-
-		const selected = await ctx.ui.select(`Select branch usage to view for ${parsed.project}:`, branches);
-		if (!selected) {
-			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, cancelled: true, branches, skippedLines }, null, 2) : "Branch selection cancelled.", parsed.json);
-			return;
-		}
-		parsed.branch = selected;
+		parsed.branch = branch;
 	}
 
 	if (parsed.branch && !records.some((record) => matchesProject(record, parsed.project!) && matchesBranch(record, parsed.branch!))) {
@@ -1327,22 +1330,58 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 }
 
 export default function (pi: ExtensionAPI) {
-	let activeTags: string[] = [];
+	let usageSession: UsageSessionState | undefined;
 
-	const reconstructTags = (ctx: ExtensionContext): void => {
-		activeTags = [];
+	const legacyTags = (ctx: ExtensionContext): string[] => {
+		let tags: string[] = [];
 		for (const entry of ctx.sessionManager.getBranch() as SessionEntry[]) {
-			if (entry.type !== "custom" || entry.customType !== usageTagCustomType) continue;
-			const state = entry.data as UsageTagState | undefined;
-			if (state?.version === 1 && Array.isArray(state.tags) && state.tags.every((tag) => typeof tag === "string")) {
-				activeTags = parseTags(state.tags.join(","));
-			}
+			if (entry.type !== "custom" || entry.customType !== legacyUsageTagCustomType) continue;
+			const state = entry.data as { version?: unknown; tags?: unknown } | undefined;
+			if (state?.version === 1 && Array.isArray(state.tags) && state.tags.every((tag) => typeof tag === "string")) tags = normalizeUsageTags(state.tags);
 		}
+		return tags;
 	};
 
-	const updateTags = (tags: string[]): UsageTagState => {
-		activeTags = tags;
-		return { version: 1, tags: [...activeTags] };
+	const initializeUsageSession = async (ctx: ExtensionContext): Promise<UsageSessionState> => {
+		const existing = getUsageSessionState(ctx.sessionManager.getBranch());
+		if (existing) return usageSession = existing;
+
+		const cwd = getCwd(ctx);
+		let project: ProjectInfo = { name: null, gitRemote: null, gitRoot: null, gitCommonDir: null, gitBranch: null };
+		let config: UsageConfig | null = null;
+		if (cwd) {
+			project = await getProjectInfo(cwd);
+			try {
+				config = await readUsageConfig(cwd);
+				project = applyProjectAttributionOverride(project, cwd, config);
+			} catch (error: any) {
+				console.warn(`Usage tracker ignored local usage config: ${error?.message ?? String(error)}`);
+			}
+		}
+		usageSession = {
+			version: 1,
+			sessionId: ctx.sessionManager.getSessionId(),
+			sessionFile: ctx.sessionManager.getSessionFile?.() ?? null,
+			cwd,
+			project,
+			tags: normalizeUsageTags([...(config?.tags ?? []), ...legacyTags(ctx), ...getInheritedUsageTags()]),
+		};
+		pi.appendEntry(usageSessionCustomType, usageSession);
+		return usageSession;
+	};
+
+	const updateTags = (ctx: ExtensionContext, tags: string[]): UsageSessionState => {
+		const current = usageSession ?? {
+			version: 1 as const,
+			sessionId: ctx.sessionManager.getSessionId?.() ?? "unknown",
+			sessionFile: ctx.sessionManager.getSessionFile?.() ?? null,
+			cwd: getCwd(ctx),
+			project: { name: null, gitRemote: null, gitRoot: null, gitCommonDir: null, gitBranch: null },
+			tags: [],
+		};
+		usageSession = { ...current, tags: normalizeUsageTags(tags) };
+		pi.appendEntry(usageSessionCustomType, usageSession);
+		return usageSession;
 	};
 
 	const handleTagCommand = async (parsed: ParsedUsageCommand, ctx: ExtensionContext): Promise<void> => {
@@ -1350,13 +1389,14 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.notify(parsed.error, "error");
 			return;
 		}
+		const activeTags = usageSession?.tags ?? [];
 		if (parsed.list) {
 			const result = { ok: true, tags: activeTags };
 			await notifyOutput(ctx, parsed.json ? JSON.stringify(result, null, 2) : formatTags(activeTags), parsed.json);
 			return;
 		}
 		if (parsed.tagClear) {
-			pi.appendEntry(usageTagCustomType, updateTags([]));
+			updateTags(ctx, []);
 			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, tags: [] }, null, 2) : "Cleared active usage tags.", parsed.json);
 			return;
 		}
@@ -1366,21 +1406,20 @@ export default function (pi: ExtensionAPI) {
 				await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: false, error: `Tag not active: ${parsed.tagRemove}` }, null, 2) : `Tag not active: ${parsed.tagRemove}`, parsed.json);
 				return;
 			}
-			pi.appendEntry(usageTagCustomType, updateTags(remaining));
-			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, tags: activeTags }, null, 2) : formatTags(activeTags), parsed.json);
+			const state = updateTags(ctx, remaining);
+			await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, tags: state.tags }, null, 2) : formatTags(state.tags), parsed.json);
 			return;
 		}
-		const tags = parseTags([...activeTags, ...(parsed.tags ?? [])].join(","));
-		pi.appendEntry(usageTagCustomType, updateTags(tags));
-		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, tags: activeTags }, null, 2) : formatTags(activeTags), parsed.json);
+		const state = updateTags(ctx, [...activeTags, ...(parsed.tags ?? [])]);
+		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, tags: state.tags }, null, 2) : formatTags(state.tags), parsed.json);
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
-		reconstructTags(ctx);
+		await initializeUsageSession(ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
-		reconstructTags(ctx);
+		await initializeUsageSession(ctx);
 	});
 
 	pi.on("message_end", async (event, ctx) => {
@@ -1390,23 +1429,10 @@ export default function (pi: ExtensionAPI) {
 		if (event.message.role !== "assistant") return;
 		if (!event.message.usage) return;
 
-		const record = buildRecord(ctx, event.message, activeTags);
+		const record = buildRecord(ctx, event.message, await initializeUsageSession(ctx));
 		// Protect against duplicate event delivery within this process. Cross-process
 		// dedupe is intentionally deferred unless/until we move to SQLite.
 		if (seenRecordIds.has(record.id)) return;
-
-		if (record.cwd) {
-			const project = await getProjectInfo(record.cwd);
-			try {
-				const config = await readUsageConfig(record.cwd);
-				record.project = applyProjectAttributionOverride(project, record.cwd, config);
-				record.tags = normalizeUsageTags([...(config?.tags ?? []), ...activeTags]);
-				if (!record.tags.length) delete record.tags;
-			} catch (error: any) {
-				console.warn(`Usage tracker ignored local usage config: ${error?.message ?? String(error)}`);
-				record.project = project;
-			}
-		}
 		await appendLedgerRecord(record);
 		seenRecordIds.add(record.id);
 	});

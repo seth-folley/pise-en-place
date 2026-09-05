@@ -124,7 +124,7 @@ Projects:
 /usage project <project> --branch <branch>
 ```
 
-`/usage project <project>` shows a lifetime project report with overview, branch, and tag breakdowns when tagged records exist. Branch names are local to a project; use `--branch` with no value to select a recorded branch interactively, or `--branch <branch>` to filter directly. Project- or branch-filtered summaries and reports also include available tag breakdowns. A record with multiple tags contributes to each of its tag rows, so tag totals may overlap rather than sum to the report total.
+`/usage project <project>` shows a lifetime project report with overview, branch, and tag breakdowns when tagged records exist. Branch names are local to a project; use `--branch` with no value to filter to the current Git branch, or `--branch <branch>` to filter directly. Project- or branch-filtered summaries and reports also include available tag breakdowns. A record with multiple tags contributes to each of its tag rows, so tag totals may overlap rather than sum to the report total.
 
 Models:
 
@@ -162,14 +162,15 @@ Filter time ranges:
 /usage month --project <project>
 /usage today --model <model>
 /usage lifetime --project <project> --model <model>
+/usage month --branch
 /usage month --project <project> --branch <branch>
 ```
 
-`--branch` requires a project because local branch names may repeat across repositories.
+`--branch <branch>` requires a project because local branch names may repeat across repositories. With no value, `--branch` defaults to the current workspace's Git project and branch. Detached HEADs and non-Git directories must supply an explicit branch.
 
 ### Session tags
 
-Tags are arbitrary, session-scoped labels attached to every later usage record. They are additive and persist in the current session branch. Tags from `.pi/usage.json` are included as defaults.
+Tags are arbitrary, session-scoped labels attached to every later usage record. At session start, Pi snapshots the session identity, workspace/project attribution, branch, and `.pi/usage.json` default tags into a private `usage-session` entry. `/usage tag` changes only that snapshot's mutable tags; later config or Git changes do not alter records already attributed to the session. Tags are additive and persist in the current session branch.
 
 ```text
 /usage tag implementation,usage-attribution

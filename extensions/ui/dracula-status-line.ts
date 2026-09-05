@@ -1,8 +1,23 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+    clearContextUsageDisplayState,
+    createContextUsageDisplayState,
+    getContextUsageDisplay,
+    recordAssistantContextUsage,
+} from "../../src/shared/context-usage-display.ts";
 
 type FooterStyle = "dracula" | "minimal" | "off";
+
+type ContextTrace = {
+    event: string;
+    tokens: number | null;
+    percent: number | null;
+    branchEntries: number;
+};
+
+const maxContextTraces = 100;
 
 function formatCount(value: number): string {
     if (value < 1_000) return `${value}`;
@@ -31,6 +46,39 @@ function thinkingColor(level: string): ThemeColor {
 export default function (pi: ExtensionAPI) {
     let style: FooterStyle = "dracula";
     let previewVisible = false;
+    let contextTracing = false;
+    let contextTraces: ContextTrace[] = [];
+    let lastContextTraceKey: string | undefined;
+    const contextUsageDisplay = createContextUsageDisplayState();
+
+    const traceContextUsage = (event: string, ctx: ExtensionContext) => {
+        if (!contextTracing) return;
+
+        const usage = ctx.getContextUsage();
+        const trace: ContextTrace = {
+            event,
+            tokens: usage?.tokens ?? null,
+            percent: usage?.percent ?? null,
+            branchEntries: ctx.sessionManager.getBranch().length,
+        };
+        const traceKey = `${trace.event}:${trace.tokens}:${trace.percent}:${trace.branchEntries}`;
+        if (traceKey === lastContextTraceKey) return;
+
+        lastContextTraceKey = traceKey;
+        contextTraces.push(trace);
+        if (contextTraces.length > maxContextTraces) contextTraces.shift();
+    };
+
+    const formatContextTraces = () => {
+        if (!contextTraces.length) return "No context samples recorded.";
+        return [
+            "Context trace",
+            "",
+            ...contextTraces.map((trace) =>
+                `${trace.event.padEnd(20)} tokens=${trace.tokens ?? "unknown"}  percent=${trace.percent === null ? "unknown" : `${trace.percent.toFixed(1)}%`}  entries=${trace.branchEntries}`,
+            ),
+        ].join("\n");
+    };
 
     const installFooter = (ctx: ExtensionContext) => {
         if (style === "off") {
@@ -69,8 +117,12 @@ export default function (pi: ExtensionAPI) {
                     const outputText = formatCount(output);
                     const totalText = formatCount(input + output);
                     const costText = formatCurrency(cost);
-                    const contextUsage = ctx.getContextUsage();
-                    const contextPercent = contextUsage?.percent;
+                    const liveContextUsage = ctx.getContextUsage();
+                    const contextUsage = getContextUsageDisplay(contextUsageDisplay, {
+                        tokens: liveContextUsage?.tokens ?? null,
+                        percent: liveContextUsage?.percent ?? null,
+                    });
+                    const contextPercent = contextUsage.percent;
                     const contextWidth = 20;
                     const contextRatio = contextPercent === null || contextPercent === undefined
                         ? 0
@@ -87,7 +139,7 @@ export default function (pi: ExtensionAPI) {
                                     : "success";
                     const contextPercentText = contextPercent === null || contextPercent === undefined
                         ? "--%"
-                        : `${Math.round(contextPercent)}%`;
+                        : `${contextUsage.estimated ? "~" : ""}${Math.round(contextPercent)}%`;
                     const contextFilled = "█".repeat(contextFill);
                     const contextEmpty = "░".repeat(contextWidth - contextFill);
 
@@ -164,13 +216,51 @@ export default function (pi: ExtensionAPI) {
     };
 
     pi.on("session_start", async (_event, ctx) => {
+        clearContextUsageDisplayState(contextUsageDisplay);
         installFooter(ctx);
         ctx.ui.setTitle("π · Dracula Pro");
     });
 
+    pi.on("session_compact", async (_event, ctx) => {
+        clearContextUsageDisplayState(contextUsageDisplay);
+        traceContextUsage("session_compact", ctx);
+    });
+    pi.on("model_select", async (_event, ctx) => {
+        clearContextUsageDisplayState(contextUsageDisplay);
+        traceContextUsage("model_select", ctx);
+    });
+    pi.on("agent_start", async (_event, ctx) => traceContextUsage("agent_start", ctx));
+    pi.on("message_start", async (event, ctx) => traceContextUsage(`message_start:${event.message.role}`, ctx));
+    pi.on("message_end", async (event, ctx) => {
+        if (event.message.role === "assistant") {
+            const usage = ctx.getContextUsage();
+            recordAssistantContextUsage(contextUsageDisplay, event.message, {
+                tokens: usage?.tokens ?? null,
+                percent: usage?.percent ?? null,
+            });
+        }
+        traceContextUsage(`message_end:${event.message.role}`, ctx);
+    });
+    pi.on("tool_execution_start", async (event, ctx) => traceContextUsage(`tool_execution_start:${event.toolName}`, ctx));
+    pi.on("tool_execution_end", async (event, ctx) => traceContextUsage(`tool_execution_end:${event.toolName}`, ctx));
+    pi.on("agent_settled", async (_event, ctx) => traceContextUsage("agent_settled", ctx));
+
     pi.registerCommand("statusline", {
-        description: "Cycle Dracula status line style: dracula, minimal, off",
-        handler: async (_args, ctx) => {
+        description: "Cycle Dracula status line style, or trace context usage with /statusline debug",
+        handler: async (args, ctx) => {
+            if (args.trim() === "debug") {
+                contextTracing = !contextTracing;
+                if (contextTracing) {
+                    contextTraces = [];
+                    lastContextTraceKey = undefined;
+                    traceContextUsage("trace-enabled", ctx);
+                    ctx.ui.notify("Context tracing enabled. Run the suspected turn, then use /statusline debug again to view the trace.", "info");
+                } else {
+                    ctx.ui.notify(formatContextTraces(), "info");
+                }
+                return;
+            }
+
             style = style === "dracula" ? "minimal" : style === "minimal" ? "off" : "dracula";
             installFooter(ctx);
             ctx.ui.notify(`Status line: ${style}`, "info");

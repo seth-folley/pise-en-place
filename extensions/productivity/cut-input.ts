@@ -24,4 +24,20 @@ export default function (pi: ExtensionAPI) {
 			setTimeout(() => ctx.ui.setStatus("cut-input", undefined), 2000);
 		},
 	});
+
+	pi.registerShortcut("alt+/", {
+		description: "Copy current input to clipboard and start a slash command",
+		handler: async (ctx) => {
+			const text = ctx.ui.getEditorText();
+
+			if (text) {
+				await copyToClipboard(text);
+				ctx.ui.notify("Input copied to clipboard", "info");
+				ctx.ui.setStatus("slash-command-draft", "Input copied to clipboard");
+				setTimeout(() => ctx.ui.setStatus("slash-command-draft", undefined), 2000);
+			}
+
+			ctx.ui.setEditorText("/");
+		},
+	});
 }
