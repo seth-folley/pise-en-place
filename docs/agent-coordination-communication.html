@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Agent coordination · Communication architecture</title>
+<style>
+:root{--bg:#10151e;--panel:#18212e;--panel2:#202c3b;--ink:#edf3fa;--muted:#b2c0d2;--line:#3c5067;--accent:#7ce0c2;--blue:#91bdff;--amber:#f5c77b;--purple:#c8adff;--code:#111a26}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:85px}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--blue);text-underline-offset:4px}a:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:5px}header,main,footer{max-width:1120px;margin:auto;padding:0 30px}header{padding-top:76px;padding-bottom:46px}.eyebrow{color:var(--accent);font-size:12px;letter-spacing:.16em;text-transform:uppercase;font-weight:750}h1{font-size:clamp(38px,6vw,68px);line-height:1.08;letter-spacing:-.045em;max-width:880px;margin:20px 0 24px}h2{font-size:30px;line-height:1.2;letter-spacing:-.025em;margin:10px 0 20px}h3{font-size:18px;line-height:1.35;margin:0 0 10px}p{margin:0 0 16px}.lede{max-width:780px;font-size:20px;color:var(--muted)}.tags{display:flex;gap:10px;flex-wrap:wrap;margin-top:26px}.tag{border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;color:var(--muted)}nav{position:sticky;top:0;z-index:5;background:var(--bg);border-block:1px solid var(--line)}nav div{max-width:1120px;margin:auto;padding:14px 30px;display:flex;gap:24px;overflow:auto}nav a{white-space:nowrap;text-decoration:none;font-size:13px;color:var(--muted)}nav a:hover{color:var(--accent)}section{padding:52px 0;border-bottom:1px solid var(--line)}.section-no{color:var(--accent);font:12px ui-monospace,monospace;letter-spacing:.08em}.intro{max-width:820px;color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:24px 0}.two{grid-template-columns:repeat(2,1fr)}.card{padding:23px;border:1px solid var(--line);border-radius:13px;background:var(--panel)}.card p:last-child{margin-bottom:0}.card p,.card li{color:var(--muted);font-size:14px}.callout{border-left:3px solid var(--accent);background:var(--panel);padding:20px 24px;margin:24px 0;border-radius:0 10px 10px 0}.callout p:last-child{margin-bottom:0}.warning{border-color:var(--amber)}strong{color:var(--ink)}code{font: .88em ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--code);padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}pre{margin:18px 0 0;padding:23px;background:var(--code);border:1px solid var(--line);border-radius:12px;overflow:auto;font-size:13px;line-height:1.7}pre code{padding:0;background:none;overflow-wrap:normal}figure{margin:26px 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}.diagram{padding:20px;overflow:auto}svg{display:block;width:100%;min-width:760px;height:auto}svg text{font-family:system-ui,sans-serif;fill:var(--ink);font-size:14px}svg .sub{fill:var(--muted);font-size:12px}svg .label{fill:var(--accent);font-size:12px}svg .box{fill:var(--panel2);stroke:var(--line);stroke-width:1.5}svg .broker{fill:var(--panel2);stroke:var(--accent);stroke-width:1.5}svg .wire{stroke:var(--accent);stroke-width:2;fill:none}svg .return{stroke:var(--blue);stroke-width:1.7;fill:none;stroke-dasharray:5 4}svg .life{stroke:var(--line);stroke-width:1.5;stroke-dasharray:5 5}svg .warnbox{fill:var(--panel2);stroke:var(--amber)}figcaption{padding:16px 22px;border-top:1px solid var(--line);font-size:13px;color:var(--muted)}.table-wrap{overflow:auto;margin:24px 0}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:15px 14px}th{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}td{color:var(--muted)}td:first-child{color:var(--ink);font-weight:650}tr.recommended{background:var(--panel)}.flow{display:flex;align-items:stretch;gap:10px;margin:26px 0;flex-wrap:wrap}.step{flex:1;min-width:140px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:17px;font-size:14px}.step small{display:block;color:var(--muted);margin-top:7px}.arrow{align-self:center;color:var(--accent)}ul,ol{padding-left:22px}li{margin:8px 0}.small{font-size:13px;color:var(--muted)}.accent{color:var(--accent)}.amber{color:var(--amber)}details{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin:14px 0}summary{cursor:pointer;font-weight:650}details p{margin-top:15px}.question{counter-increment:question}.question h3::before{content:"0" counter(question) " / ";color:var(--accent)}footer{padding-top:30px;padding-bottom:60px;color:var(--muted);font-size:13px}
+@media(prefers-color-scheme:light){:root{--bg:#f6f8fb;--panel:#fff;--panel2:#edf2f8;--ink:#162235;--muted:#4c5e73;--line:#bbc9d8;--accent:#086d56;--blue:#205da5;--amber:#946013;--purple:#6942a4;--code:#edf2f7}}
+@media(max-width:700px){header,main,footer{padding-left:20px;padding-right:20px}header{padding-top:42px}.grid,.two{grid-template-columns:1fr}nav div{padding-inline:20px;gap:18px}section{padding:38px 0}.lede{font-size:18px}.diagram{padding:12px}h2{font-size:26px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{nav{display:none}body{--bg:#fff;--panel:#fff;--panel2:#f0f3f5;--ink:#111;--muted:#444;--line:#aaa;--accent:#075d4a;--blue:#174c89;--amber:#80520d;--code:#f3f3f3;font-size:11px}header{padding-top:10px}section{padding:24px 0}.diagram{overflow:visible}svg{min-width:0}figure,.card{break-inside:avoid}h1{font-size:38px}h2{font-size:24px}nav+main{max-width:none}}
+</style>
+</head>
+<body>
+<header>
+<div class="eyebrow">Pise-en-place / Architecture discussion / Draft 01</div>
+<h1>Independent agents.<br>A reliable conversation.</h1>
+<p class="lede">A local, durable message service connects existing Pi sessions—without sharing their brains, interrupting their tools, or turning agreement into permission.</p>
+<div class="tags"><span class="tag">Architecture proposal · manual pilot now in source</span><span class="tag">Same machine · multiple repositories</span><span class="tag">No automatic agent spawning</span><span class="tag">Human authority by default</span></div>
+<div class="callout"><strong>Implementation update:</strong> the first manual messaging slice is now in this repository. See <a href="agent-coordination.md">actual setup, commands, limitations, and test coverage</a> and <a href="agent-coordination-protocol.md">protocol v1</a>. This document retains the broader design: automatic wakeups, decision authority, and single-session multi-room membership are not implemented in the pilot. Installation/reload and live-session validation are separate steps.</div>
+</header>
+<nav aria-label="Document sections"><div><a href="#recommendation">Recommendation</a><a href="#topology">Topology</a><a href="#team-rooms">Team rooms</a><a href="#exchange">Message flow</a><a href="#delivery">Delivery & recovery</a><a href="#wakeups">Wakeups</a><a href="#authority">Decisions</a><a href="#team-ui">Team UI</a><a href="#discussion">Discuss next</a></div></nav>
+<main>
+<section id="recommendation">
+<span class="section-no">01 / THE DESIGN CHOICE</span>
+<h2>A message broker, not a shared scratchpad.</h2>
+<p class="intro">Use one small per-user broker, persistent Unix-domain socket connections, and broker-owned SQLite storage. Each Pi session loads a coordination extension. Agents exchange explicit messages through tools; the broker routes them into durable participant mailboxes.</p>
+<div class="callout"><strong>The important upgrade is ownership, not file format.</strong><p>SQLite is still stored in files and uses locks internally. The difference is that agents no longer compete to rewrite shared state. One service owns transactions, ordering, identity, and recovery. Sessions communicate through a versioned protocol, never by editing the database.</p></div>
+<div class="table-wrap"><table><thead><tr><th>Approach</th><th>What it gives us</th><th>Why / why not</th></tr></thead><tbody>
+<tr><td>Locked shared JSON file</td><td>Few dependencies; easy initial inspection.</td><td>Every client inherits locking, stale-owner recovery, schema changes, notifications, and authorization logic. Valid for a tiny prototype; an awkward foundation for these requirements.</td></tr>
+<tr><td>Direct peer-to-peer sockets</td><td>Immediate communication; no central process.</td><td>Each agent needs discovery, durable offline queues, retries, and identity checks. Cross-agent decisions still need an authoritative ordering point.</td></tr>
+<tr class="recommended"><td>Local broker + SQLite<br><span class="accent">Recommended</span></td><td>Push notifications, offline mailboxes, transactional decisions, centralized policy.</td><td>One extra process to operate; coordination pauses if it fails. Local coding continues. Small enough to own in this package.</td></tr>
+<tr><td>NATS JetStream / Redis Streams</td><td>Mature messaging infrastructure and durable consumers when configured appropriately.</td><td>Reasonable if scale or cross-machine use becomes a requirement. Adds installation/operations now, and does not solve Pi context delivery or human authority for us.</td></tr>
+</tbody></table></div>
+<p class="small">Transport alternative: loopback HTTP + event streaming is viable if browser clients or Windows become near-term requirements. For the initial macOS/local-terminal workflow, Unix sockets avoid port management and unnecessary network exposure. This platform choice needs agreement before implementation.</p>
+</section>
+<section id="topology">
+<span class="section-no">02 / WHO TALKS TO WHOM</span>
+<h2>One connection per session. One authoritative service.</h2>
+<p class="intro">The agents are peers. The broker is infrastructure, not a manager and not an LLM. An optional moderator joins through the same extension as everyone else.</p>
+<figure><div class="diagram">
+<svg viewBox="0 0 1000 490" role="img" aria-labelledby="top-title top-desc">
+<title id="top-title">Two Pi sessions communicate through a local broker</title><desc id="top-desc">App and backend sessions have independent contexts and extensions. Both connect bidirectionally to one broker over Unix sockets. The broker alone writes SQLite. A manually joined moderator is optional. The human controls membership, pause, and authority through an extension.</desc>
+<defs><marker id="top-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="var(--accent)"/></marker></defs>
+<rect class="box" x="20" y="35" width="245" height="155" rx="12"/><text x="40" y="64" font-weight="700">App agent · Pi session A</text><text class="sub" x="40" y="88">App repository / own model context</text><rect class="box" x="38" y="112" width="209" height="55" rx="8"/><text x="55" y="144">Coordination extension</text>
+<rect class="box" x="20" y="250" width="245" height="155" rx="12"/><text x="40" y="279" font-weight="700">Backend agent · Pi session B</text><text class="sub" x="40" y="303">Backend repo / own model context</text><rect class="box" x="38" y="327" width="209" height="55" rx="8"/><text x="55" y="359">Coordination extension</text>
+<rect class="broker" x="375" y="80" width="270" height="285" rx="14"/><text x="400" y="113" font-size="19" font-weight="700">Local coordination broker</text><text class="label" x="400" y="137">Deterministic code · no model calls</text><text x="400" y="179">Membership &amp; connection leases</text><text x="400" y="216">Mailboxes, threads &amp; receipts</text><text x="400" y="253">Pause &amp; activation budgets</text><text x="400" y="290">Decisions &amp; authority checks</text><text class="sub" x="400" y="333">Explicit project ID ≠ repository path</text>
+<path class="wire" d="M247 140 H375" marker-start="url(#top-arrow)" marker-end="url(#top-arrow)"/><text class="sub" x="279" y="127">socket</text><path class="wire" d="M247 354 H330 V309 H375" marker-start="url(#top-arrow)" marker-end="url(#top-arrow)"/>
+<rect class="box" x="750" y="85" width="230" height="115" rx="12"/><text x="770" y="117" font-weight="700">SQLite · broker-owned</text><text class="sub" x="770" y="144">Messages + per-recipient delivery</text><text class="sub" x="770" y="169">Decision revisions + audit events</text><path class="wire" d="M645 142 H750" marker-start="url(#top-arrow)" marker-end="url(#top-arrow)"/>
+<rect class="box" x="750" y="270" width="230" height="95" rx="12"/><text x="770" y="302" font-weight="700">Optional moderator session</text><text class="sub" x="770" y="329">Same protocol, no inherent authority</text><path class="wire" d="M645 315 H750" marker-start="url(#top-arrow)" marker-end="url(#top-arrow)"/>
+<rect class="warnbox" x="375" y="410" width="605" height="55" rx="10"/><text x="399" y="443">Human controls via extension UI: join · pause · review · delegate · revoke</text><path class="wire" d="M510 410 V365" marker-end="url(#top-arrow)"/>
+</svg></div><figcaption>Only explicit message content and coordination metadata cross these connections. No transcript mirroring, shared system prompts, terminal keystroke injection, or writes to another session’s JSONL.</figcaption></figure>
+<div class="grid">
+<div class="card"><h3>The agent reasons</h3><p>Chooses a recipient, asks a concrete question, cites artifacts, replies, or proposes a decision. It does not implement transport retries or continuously poll an inbox.</p></div>
+<div class="card"><h3>The extension adapts</h3><p>Binds the current session, exposes tools, renders notifications, and inserts attributed peer messages at safe Pi boundaries. It owns local pause and abort handling.</p></div>
+<div class="card"><h3>The broker guarantees</h3><p>Validates membership, stores accepted sends, orders threads, manages delivery records, and serializes policy changes. It never executes an agent’s shell commands.</p></div>
+</div>
+<h3>Identity is explicit, not inferred from a directory.</h3>
+<p>Join a named coordination project and choose a participant name/role. The broker assigns immutable project and participant IDs. A live binding includes the Pi session ID and a monotonically increasing connection generation; stale connections cannot mutate state. Duplicate names never silently take over a participant.</p>
+<p class="small">Reload may restore the same identity with a fresh generation. New/resume/fork/clone detach by default and require explicit rejoin; process-restart automatic rejoin is a separate opt-in. Heartbeats provide observed presence, not proof that the model is making progress. Self-reported blockers remain a separate field.</p>
+</section>
+<section id="team-rooms">
+<span class="section-no">02A / MULTIPLE TEAMS · SEPARATE ROOMS</span>
+<h2>One broker does not mean one big team.</h2>
+<p class="intro"><strong>Agreed direction:</strong> multiple teams can run concurrently, each with its own explicitly joined room and specific participants. A team is the user-facing name for a coordination project in the requirements; the room’s immutable ID is the protocol’s projectId. Repository paths do not determine membership, and sharing a broker never enrolls sessions in a common conversation.</p>
+<figure><div class="diagram"><pre aria-label="Separate team rooms hosted by one local broker"><code>LOCAL BROKER · shared transport and storage service
+│
+├── ROOM disc-catalog                 projectId: room-A
+│   ├── app       · Pi session A
+│   ├── backend   · Pi session B
+│   └── reviewer  · Pi session C
+│   Own threads, inboxes, decisions, grants, pause and budgets
+│
+└── ROOM website-redesign             projectId: room-B
+    ├── frontend  · Pi session D
+    └── designer  · Pi session E
+    Own threads, inboxes, decisions, grants, pause and budgets
+
+<span class="amber">No implicit routing, broadcasts, or membership between rooms.</span></code></pre></div><figcaption>These rooms run at the same time. They may involve different repositories, worktrees, or even the same repository. A session in room A has no access to room B through coordination tools unless explicitly enrolled there.</figcaption></figure>
+<div class="grid two"><div class="card"><h3>Room-scoped everything</h3><p>Validate membership and room ownership on every send, read, receipt, subscription, redirect, decision, and authority operation. Reject a recipient/thread/decision from another room even if the caller belongs to both. Participant identities and roles belong to a room; the same display name can exist independently in different rooms.</p><p>Pausing, leaving, or resetting a room’s limits does not change another room. Reconnecting restores only valid, explicitly enrolled bindings. Broker failure can affect every room’s transport, but never merges their history.</p></div><div class="card"><h3>Logical rooms, not separate daemons</h3><p>One persistent socket per Pi session can multiplex authorized room subscriptions. The connection carries explicit room IDs; the broker maintains separate room-bound participant/session generations and mailboxes. Separate processes or socket files per team are not required for this isolation.</p><p>Redirection stays within the original room. Moving information to another room would require a separate explicit send, with provenance, rather than silently moving a thread or forwarding room announcements.</p></div></div>
+<h3>Additional proposal: one session may explicitly join multiple rooms</h3>
+<p>Running several teams across different sessions is required. Supporting several memberships in a single Pi session avoids a singleton “current team” constraint as well. A second join would add a room, not replace the first. Each membership gets its own participant identity, role, mailbox, wakeup policy, and local pause. A session-wide pause can stop all its coordination delivery.</p>
+<ul>
+<li><strong>Always scope agent actions.</strong> Agent tool requests include an explicit room ID. Reply and thread relationships are checked against it. No destination is inferred from whichever team most recently sent a notification.</li>
+<li><strong>Keep human commands unambiguous.</strong> Proposed syntax: <code>/team join &lt;room&gt;</code>, <code>/team status [room]</code>, <code>/team inbox &lt;room&gt;</code>, and <code>/team leave &lt;room&gt;</code>. Bare status shows joined-room summaries and lets the user inspect one. For mutations, require a room or show a room picker when ambiguous; do not silently act on every team.</li>
+<li><strong>Serialize access to the model.</strong> One Pi session still has one agent run at a time. Fairly schedule eligible messages across joined rooms at safe boundaries; enforce each room’s budgets plus a session-wide activation bound. Receiving traffic from several rooms is not permission for parallel model runs or an aggregate budget bypass.</li>
+<li><strong>Label all content and notices.</strong> Include the room name and stable identity in messages, approval reviews, unavailable-recipient notices, and reconnect summaries. Only show the widget’s rooms that this session has joined, not all rooms hosted by the broker.</li>
+</ul>
+<div class="callout warning"><strong>Shared session means shared model context.</strong><p>Broker routing isolation cannot prevent a model enrolled in two rooms from remembering content from both. Use separate Pi sessions when teams need context separation. Multi-room membership is explicit and must warn about this boundary; it is not a mechanism for confidential compartments inside one model context.</p></div>
+<p class="small">Isolation tests: run two rooms simultaneously; reject cross-room IDs and subscriptions; allow identical names without identity collision; verify room pause/leave/reconnect and grants remain scoped; verify status excludes unjoined-room metadata. If multi-room sessions are enabled, test explicit routing, fair scheduling, aggregate limits, and that a second join preserves the first membership.</p>
+</section>
+<section id="exchange">
+<span class="section-no">03 / A REAL EXCHANGE</span>
+<h2>Send now. Receive safely. Reply later.</h2>
+<p class="intro">Example: the backend asks whether missing flight numbers should be represented as null. Its send finishes after a database commit—not after the app agent thinks about the answer.</p>
+<figure><div class="diagram">
+<svg viewBox="0 0 1000 595" role="img" aria-labelledby="seq-title seq-desc">
+<title id="seq-title">Asynchronous question and reply sequence</title><desc id="seq-desc">Backend sends a question to the broker. The broker commits the message and pending delivery before returning stored success. It notifies the app extension, which waits for an allowed context boundary. After recording the message, the app reports a receipt. The app model can later reply through a new send in the same thread.</desc>
+<defs><marker id="seq-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="var(--accent)"/></marker><marker id="seq-back" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="var(--blue)"/></marker></defs>
+<rect class="box" x="15" y="15" width="200" height="48" rx="8"/><text x="40" y="45">Backend + extension</text><rect class="broker" x="295" y="15" width="170" height="48" rx="8"/><text x="350" y="45">Broker</text><rect class="box" x="565" y="15" width="175" height="48" rx="8"/><text x="596" y="45">App extension</text><rect class="box" x="815" y="15" width="170" height="48" rx="8"/><text x="850" y="45">App model</text>
+<path class="life" d="M115 63 V575 M380 63 V575 M652 63 V575 M900 63 V575"/>
+<path class="wire" d="M115 116 H380" marker-end="url(#seq-arrow)"/><text class="sub" x="127" y="102">1. Send question + request key K</text>
+<rect class="box" x="300" y="135" width="220" height="52" rx="8"/><text class="sub" x="315" y="157">2. Transaction: message M + delivery</text><text class="sub" x="315" y="174">Commit before success or notification</text>
+<path class="return" d="M380 219 H115" marker-end="url(#seq-back)"/><text class="sub" x="128" y="205">3. Stored: M, thread T, sequence 1</text>
+<path class="wire" d="M380 264 H652" marker-end="url(#seq-arrow)"/><text class="sub" x="391" y="250">4. Mailbox changed → fetch pending M</text>
+<rect class="warnbox" x="561" y="283" width="412" height="65" rx="8"/><text x="577" y="309">5. Wait for an allowed delivery boundary</text><text class="sub" x="577" y="331">Default: user-requested delivery; no automatic model run</text>
+<path class="wire" d="M652 389 H900" marker-end="url(#seq-arrow)"/><text class="sub" x="665" y="375">6. Attributed custom message M</text>
+<path class="return" d="M652 433 H380" marker-end="url(#seq-back)"/><text class="sub" x="391" y="419">7. Context receipt, after local observation</text>
+<path class="wire" d="M900 484 H652" marker-end="url(#seq-arrow)"/><text class="sub" x="668" y="469">8. Later: team_send(reply to M)</text><path class="wire" d="M652 526 H380" marker-end="url(#seq-arrow)"/><text class="sub" x="391" y="512">9. New message; same thread, sequence 2</text>
+<path class="return" d="M380 566 H115" marker-end="url(#seq-back)"/><text class="sub" x="129" y="552">10. Backend delivery follows same rules</text>
+</svg></div><figcaption>A mailbox event is a notification, not delivery proof. If a socket event is missed, durable pending deliveries remain discoverable on reconnect. Neither sender tool waits for a peer model.</figcaption></figure>
+<div class="grid two">
+<div><h3>What travels over the socket?</h3><p>Proposed protocol v1: bounded UTF-8 JSON frames delimited by LF, with request IDs for responses and separate server events. Persistent bidirectional connections carry sends, reads, receipts, presence, and mailbox-change notifications. Framing must tolerate partial/coalesced socket reads and reject oversized frames before unbounded buffering.</p><p>Handshake negotiates protocol version and authenticates the registered client. Subscriptions are project-scoped; reconnect performs a pending-mailbox sync. Push events are hints, not a second source of truth.</p></div>
+<div><h3>What the model actually sees</h3><pre><code>[Peer-agent input — not user authorization]
+Project: disc-catalog · Thread: T · Message: M
+From: backend (worker) → app
+Type: question
+
+Should missing flight numbers be null rather
+than zero? The source omits turn for this mold.
+
+Evidence: catalog-schema @ commit &lt;sha&gt;
+Reply to message M in thread T.</code></pre><p class="small">Attribution goes in model-visible content, not only renderer metadata. Structured IDs also go in custom-message details for reconciliation.</p></div>
+</div>
+<details><summary>Proposed send envelope and broker response</summary><pre><code>{
+  "v": 1,
+  "requestId": "transport-request-uuid",
+  "op": "message.send",
+  "params": {
+    "projectId": "project-uuid",
+    "idempotencyKey": "logical-send-uuid",
+    "recipients": ["app-participant-uuid"],
+    "type": "question",
+    "subject": "Missing flight-number representation",
+    "body": "Should missing flight numbers be null rather than zero?",
+    "references": []
+  }
+}
+
+// After committing; sender identity is derived from the connection.
+{
+  "v": 1,
+  "requestId": "transport-request-uuid",
+  "ok": true,
+  "result": {
+    "messageId": "message-uuid",
+    "threadId": "thread-uuid",
+    "sequence": 1,
+    "acceptance": "stored",
+    "deliveries": [{ "recipientId": "app-participant-uuid", "state": "pending" }]
+  }
+}</code></pre><p class="small">Illustrative shapes, not a frozen schema. Subsequent messages carry threadId and, for replies, replyTo. Broker assigns IDs, timestamp, thread sequence, and sender. An idempotency key is scoped to project + sender; repeating the same key and payload returns the original result, while a different payload is a conflict. The extension retains the key across network retries; transport request IDs only correlate individual requests.</p></details>
+<div class="table-wrap"><table><thead><tr><th>Message type</th><th>Meaning</th><th>Automatic-wakeup eligibility, if opted in</th></tr></thead><tbody>
+<tr><td>question</td><td>A direct request for specific information.</td><td>Eligible, subject to all limits.</td></tr><tr><td>reply</td><td>Response linked to an existing message/thread.</td><td>Only when replying to an outstanding question.</td></tr><tr><td>proposal</td><td>An option offered for discussion; not an approved outcome.</td><td>No by default; use an explicit decision request for resolution.</td></tr><tr><td>decision_request</td><td>Ask for review or resolution of a structured decision.</td><td>Eligible; never grants approval authority.</td></tr><tr><td>handoff</td><td>Progress, artifacts, caveats, and suggested next steps.</td><td>Informational unless explicitly paired with an authorized request to continue existing work.</td></tr><tr><td>status</td><td>Progress or blocker update.</td><td>Never. Neither do transport ACKs, presence, or announcements.</td></tr>
+</tbody></table></div>
+</section>
+<section id="delivery">
+<span class="section-no">04 / RELIABILITY WITHOUT MAGICAL GUARANTEES</span>
+<h2>“Sent” is not a single state.</h2>
+<p class="intro">Keep message acceptance separate from per-recipient delivery, and delivery separate from understanding or task completion.</p>
+<div class="flow" role="group" aria-label="Message lifecycle from stored to explicit acknowledgment"><div class="step"><strong>Stored</strong><small>Message committed by broker.</small></div><span class="arrow" aria-hidden="true">→</span><div class="step"><strong>Pending delivery</strong><small>Durable recipient mailbox entry.</small></div><span class="arrow" aria-hidden="true">→</span><div class="step"><strong>Queued locally</strong><small>Recipient adapter or Pi queue accepted it.</small></div><span class="arrow" aria-hidden="true">→</span><div class="step"><strong>Context recorded</strong><small>Insertion observed in recipient session.</small></div><span class="arrow" aria-hidden="true">→</span><div class="step"><strong>Explicit ACK</strong><small>Agent acknowledges; resolution is a separate action.</small></div></div>
+<p class="small">Pending and later delivery states belong to each recipient, not the whole message. Cancelled/expired deliveries remain visible. A queued local copy may disappear on crash; a context receipt does not mean the model understood, acted correctly, or still retains the message after compaction.</p>
+<div class="grid two"><div class="card"><h3>Transactional mailbox / outbox</h3><p>Store the message, thread sequence, and all recipient delivery rows in one transaction. Delivery rows are the durable dispatch queue; notify clients only after commit. A broker crash between commit and push loses no accepted message.</p><p>Use SQLite WAL with durability settings appropriate for successful-send guarantees (proposed <code>synchronous=FULL</code>), foreign keys, uniqueness constraints, and transactional revision checks. No need for a separate queue product or full event-sourcing framework.</p></div><div class="card"><h3>At-least-once transport, stable logical identity</h3><p>Retries reuse message/delivery IDs. The extension deduplicates before insertion and records IDs in custom-message details. Old connection generations are fenced out.</p><p>Only claim what can be observed. <code>pi.sendMessage()</code> returning is not itself a durable-context receipt. A persisted message is also not proof of exactly-once model execution.</p></div></div>
+<figure><div class="diagram">
+<svg viewBox="0 0 1000 300" role="img" aria-labelledby="crash-title crash-desc">
+<title id="crash-title">Recovery at the context insertion crash boundary</title><desc id="crash-desc">An extension records a message in Pi and crashes before acknowledging the broker. On reconnect it inspects its own session for that message ID. If a matching entry is found it reconciles the receipt without replay. If the outcome cannot be proven it exposes uncertainty and requires deliberate retry.</desc>
+<defs><marker id="crash-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="var(--accent)"/></marker></defs>
+<rect class="box" x="20" y="32" width="240" height="78" rx="10"/><text x="39" y="62">Message M recorded in Pi</text><text class="sub" x="39" y="87">Local session entry includes M</text><path class="wire" d="M260 71 H315" marker-end="url(#crash-arrow)"/><rect class="warnbox" x="315" y="32" width="320" height="78" rx="10"/><text x="335" y="62">Crash before broker receipt</text><text class="sub" x="335" y="87">Broker cannot know if insertion happened</text><path class="wire" d="M635 71 H690" marker-end="url(#crash-arrow)"/><rect class="box" x="690" y="32" width="290" height="78" rx="10"/><text x="710" y="62">Reconnect same participant</text><text class="sub" x="710" y="87">Reconcile against own session entries</text>
+<path class="wire" d="M835 110 V149 H255 V186" marker-end="url(#crash-arrow)"/><path class="wire" d="M835 149 V186" marker-end="url(#crash-arrow)"/>
+<rect class="broker" x="20" y="186" width="470" height="87" rx="10"/><text x="40" y="216">Matching entry found → reconcile receipt</text><text class="sub" x="40" y="242">Do not reinsert M or wake the model again automatically.</text><rect class="warnbox" x="540" y="186" width="440" height="87" rx="10"/><text x="560" y="216">Cannot prove outcome → uncertain</text><text class="sub" x="560" y="242">Surface for deliberate retry; do not silently replay.</text>
+</svg></div><figcaption>The broker database and Pi session persistence are separate durability boundaries. This design deliberately prefers visible uncertainty over duplicate autonomous work.</figcaption></figure>
+<details><summary>Recovery rules worth agreeing on before coding</summary><ul>
+<li><strong>Lost send response:</strong> retry the same idempotency key or query its result. Timeout means unknown acceptance, not guaranteed failure. No silent offline sender spool in the first milestone.</li>
+<li><strong>Offline recipient:</strong> retain pending messages until explicit cancellation/expiry policy. Reconnect the same enrolled participant; reassignment to a new participant is a human action with an audit trail, not name matching.</li>
+<li><strong>Broker restart:</strong> reconnect with bounded backoff and jitter, validate the protocol, rebind identity, and synchronize pending state. Automatic wakeups fail closed until policy is known.</li>
+<li><strong>Compaction/tree navigation:</strong> external messages and decisions never roll back. Inspect local historical receipt IDs for deduplication, but do not confuse an entry on an old branch with current model context. Fetch relevant records on demand rather than replaying history.</li>
+<li><strong>Ephemeral session:</strong> broker history remains durable, but local context reconciliation may be impossible after a crash. Surface uncertain outcomes; do not claim durable recipient recording without evidence.</li>
+<li><strong>Storage/migration failure:</strong> return an actionable error and preserve data. Never reset the database automatically to make an incompatible client work.</li>
+</ul></details>
+</section>
+<section id="wakeups">
+<span class="section-no">05 / TRANSPORT IS NOT PERMISSION TO THINK</span>
+<h2>Push notifications. Pull context. Bounded wakeups.</h2>
+<p class="intro">A socket can receive data while an agent is executing tools. That must not imply the peer can interrupt the run or spend unlimited tokens. The extension is the final gate between mailbox and model context.</p>
+<div class="grid"><div class="card"><h3>1. Manual first <span class="accent">· default</span></h3><p>Show a compact unread/pending notification. Deliver selected messages on user request. Optional next-user-turn delivery can use Pi’s <code>nextTurn</code> semantics; it does not start a run.</p></div><div class="card"><h3>2. Automatic follow-ups <span class="amber">· opt-in</span></h3><p>At an idle/settled boundary, claim an eligible delivery and reserve a bounded activation. Use an attributed custom message with supported follow-up/trigger options. Routine work never steers an in-flight run.</p></div><div class="card"><h3>3. Urgent steering <span class="amber">· later</span></h3><p>Explicit restricted option only. Not necessary for the first milestone. It can never bypass pause, limits, or authority. Pi steering still respects supported tool boundaries.</p></div></div>
+<h3>Every automatic activation passes all gates.</h3>
+<div class="flow" role="group" aria-label="Automatic activation gates"><div class="step">Correct live identity</div><span class="arrow" aria-hidden="true">→</span><div class="step">Local + project unpaused</div><span class="arrow" aria-hidden="true">→</span><div class="step">Wakeups opted in</div><span class="arrow" aria-hidden="true">→</span><div class="step">Eligible message</div><span class="arrow" aria-hidden="true">→</span><div class="step">Budget + safe boundary</div></div>
+<ul>
+<li><strong>Keep routine messages broker-side until dispatch.</strong> Do not preload an irrevocable chain of Pi follow-ups while busy. Observe <code>agent_settled</code> and recheck <code>ctx.isIdle()</code>; <code>agent_end</code> alone is insufficient.</li>
+<li><strong>Budget transactionally.</strong> Proposed starting point: four automatic activations per thread, plus a project-wide time-window cap and pending-queue byte/count limits. One automatic recipient run consumes one reservation, not one socket notification. Exhausted limits latch until human reset; reconnects and broker restarts do not refill them.</li>
+<li><strong>Pause has a defined boundary.</strong> Serialize dispatch authorization with broker policy updates, and recheck the local gate immediately before insertion. A project-pause control should distinguish requested from effective while connected adapters settle/cancel outstanding permits. Already started dispatches/runs cannot be retroactively undone. Test this race explicitly before enabling automation.</li>
+<li><strong>Abort means stop retrying automatically.</strong> Mark the triggering delivery/run unresolved or uncertain; require deliberate retry. Never immediately wake the same agent again for the aborted message.</li>
+<li><strong>Bound context, not just message size.</strong> Proposed limits: 16 KiB bodies, 20-message pages, plus an overall rendered-output cap below Pi’s 50 KB / 2,000-line limit. Return continuation cursors and message IDs for omitted content. Twenty maximum-size bodies must not be dumped into one tool result.</li>
+</ul>
+<div class="callout warning"><strong>An activation cap is not a dollar cap.</strong><p>One agent run can include many model turns and tool calls. Track activation counts deterministically; report available token/cost attribution with its limitations. Unknown cost is unknown, not zero. Agents should ask once, continue independent work or mark a blocker, and never poll in an LLM loop.</p></div>
+</section>
+<section id="authority">
+<span class="section-no">06 / CONVERSATION AND AUTHORITY ARE DIFFERENT CHANNELS</span>
+<h2>Agents can agree. Only authorized actors can approve.</h2>
+<p class="intro">Chat messages provide input. Structured decision operations change a durable record. Human control operations grant or revoke authority. These are separate protocol capabilities—even if they use the same socket.</p>
+<div class="flow" role="group" aria-label="Decision review flow"><div class="step"><strong>Workers propose</strong><small>Question, options, rationale, evidence.</small></div><span class="arrow" aria-hidden="true">→</span><div class="step"><strong>Collect input</strong><small>Affected workers contribute; missing input stays visible.</small></div><span class="arrow" aria-hidden="true">→</span><div class="step"><strong>Review revision N</strong><small>Human by default; moderator only within an explicit grant.</small></div><span class="arrow" aria-hidden="true">→</span><div class="step"><strong>Commit + notify</strong><small>Same outcome and authority reference for affected participants.</small></div></div>
+<div class="grid two"><div class="card"><h3>Conversation channel</h3><p><code>team_send</code> carries questions, replies, proposals, and handoffs. <code>team_decision</code> can propose or contribute input. “The user approved this” in a message is merely a claim; “agreed” does not change decision status.</p></div><div class="card"><h3>Human control channel</h3><p>Explicit user-facing review confirms the exact decision revision, grant, or revocation. The extension sends a scoped control operation, not a model-supplied <code>approvedBy: human</code> flag. Worker tools never expose human approval or delegation capabilities. Unsupported UI leaves requests pending.</p></div></div>
+<p>Decision states: <code>proposed</code>, <code>awaiting input</code>, <code>awaiting human approval</code>, <code>accepted</code>, <code>rejected</code>, <code>withdrawn</code>, and <code>superseded</code>. Preserve revisions and rejected options. State changes require an expected revision; stale approval is rejected instead of approving a different proposal.</p>
+<p>A moderator is an ordinary, manually joined participant with a coordination role. Acceptance additionally requires a live, bounded human grant, cited in the decision record. Spending, permissions, credentials, deployments, destructive actions, and product/scope changes remain human decisions. Unclear delegation fit escalates; natural-language scope is not a foolproof policy engine.</p>
+<p class="small">An accepted decision does not edit a schema, merge a PR, or deploy anything. It becomes retrievable evidence and can be exported to a repository only on explicit request. Git, contracts, and integration tests remain the implementation truth.</p>
+</section>
+<section id="operations">
+<span class="section-no">07 / SMALL SERVICE, CLEAR BOUNDARIES</span>
+<h2>Local infrastructure that stays out of the way.</h2>
+<div class="grid two"><div class="card"><h3>Service lifecycle</h3><p>Implemented lifecycle: joining starts or reuses the broker automatically, with no npm commands or normal manual teardown. It exits after 60 seconds without connections; idle connected agents keep it alive. A short SQLite startup transaction serializes stale-socket recovery and binding across concurrent joins. Live endpoints and durable history are preserved.</p><p>Stopping the broker pauses communication, not Pi. A failed send reports an error/unknown outcome, never false success. Health/status should expose protocol/schema versions and queue health without logging message bodies.</p></div><div class="card"><h3>Storage & ownership</h3><p>Proposed runtime location: <code>&lt;Pi user directory&gt;/coordination/</code>, honoring <code>PI_CODING_AGENT_DIR</code>. Database, socket, and any registration credentials are private to the OS user; directory mode 0700, restrictive file/socket modes.</p><p>Back up with SQLite’s consistent backup mechanism or while stopped—not by copying a live database without its WAL. Version migrations and preserve a recovery copy. Delete projects/history only with explicit confirmation.</p></div><div class="card"><h3>Privacy & trust</h3><p>Only explicit message bodies, metadata, references, and decisions are shared. The broker never follows arbitrary file/URL references or reads session transcripts. Enrollment respects Pi project trust; references confer no access rights.</p><p>Local transport does not mean local inference: delivered content goes to the recipient’s configured model provider. Registration credentials stay out of model-visible content.</p></div><div class="card"><h3>Not a sandbox</h3><p>Reject unregistered clients and cross-project IDs. Separate human-control capabilities from worker requests and audit protected operations. But agents with unrestricted same-user shell access can bypass filesystem/tool conventions.</p><p>This protects normal workflow boundaries and prevents peer text from becoming permission; it does not defend against malicious processes running as the same OS user.</p></div></div>
+<p class="small">Implementation belongs here: extension entry under <code>extensions/coordination/</code>, focused broker/protocol modules under <code>src/coordination/</code>, genuinely shared helpers under <code>src/shared/</code>, registration in <code>package.json</code>. Factories register interfaces only; connections/timers start after session_start or explicit action, and session_shutdown cleans up idempotently. No Pi-core changes or global source files.</p>
+</section>
+<section id="team-ui">
+<span class="section-no">08 / TEAM VISIBILITY · UI PROPOSALS</span>
+<h2>See who’s around. See what needs attention.</h2>
+<p class="intro">Agents work on their own assignments, ask when needed, and continue independent work or stop with an explicit blocker. They do not wait in a polling loop. The UI should make these asynchronous conversations visible without turning the terminal into a chat dashboard.</p>
+<div class="callout"><strong>Agreed behavior: preserve messages and surface unavailable recipients.</strong><p>Questions and replies remain stored when a participant disconnects. Notify the sending agent and surface the issue to the user, with options to wait, answer, redirect, or cancel. On a valid reconnect, the participant can immediately see its pending inbox. Immediate visibility does not bypass pause or authorize a model run.</p></div>
+<h3>Selected direction · Persistent, subagent-style widget + /team status</h3>
+<p>Use a compact persistent widget above the editor, visually similar to subagent summaries: a room heading with concise participant/status rows. Keep thread bodies, delivery diagnostics, decisions, and review controls in <code>/team status</code>. The exact subagent renderer to match should be inspected before implementation; these are layout sketches, not claims of an existing shared component. Preserve the existing footer.</p>
+<figure><div class="diagram"><pre aria-label="Proposed compact team widget above the Pi editor"><code><span class="small">… normal Pi conversation and tool output …</span>
+
+<span class="accent">TEAM disc-catalog</span>   2/3 connected · 2 questions · 1 discussion
+  app (you)   <span class="accent">working</span>
+  backend     <span class="accent">idle</span>           1 needs reply
+  reviewer    <span class="amber">disconnected</span>   1 needs reply
+<span class="small">2 attention items · Details: /team status disc-catalog</span>
+
+&gt; <span class="small">Your next prompt…</span>
+<span class="small">… existing Pi footer / usage / model …</span></code></pre></div><figcaption>Illustrative, noninteractive TUI mockup. Compact participant rows remain visible while coding; attention counts summarize rather than opening dialogs. Idle is connected, not unavailable. No animation or color-only indicators.</figcaption></figure>
+<div class="grid two"><div class="card"><h3>Narrow terminals / larger teams</h3><pre><code>TEAM disc-catalog · 2/3 connected
+You: working · inbox 1 · attention 1
+/team status</code></pre><p>Collapse participant names before crowding the editor. Show the full roster on demand; truncate display names safely. Count text stays understandable in either theme.</p></div><div class="card"><h3>Multiple joined rooms</h3><pre><code>TEAM disc-catalog · 2/3 connected
+  app working · backend idle · reviewer offline
+  2 questions · 1 discussion · attention 2
+
+TEAM website-redesign · 2/2 connected
+  frontend working · designer idle
+  0 questions · 1 discussion · attention 0
+
+/team status [room]</code></pre><p>For a session explicitly enrolled in both rooms, render distinct groups—not one combined roster. Bound total widget height; collapse additional rooms into summaries with an overflow count. Concrete details remain in status.</p></div></div>
+<h3>Shared detail view · /team status</h3>
+<p>A user-requested, room-scoped roster and conversation summary. <code>/team status disc-catalog</code> opens this room’s detail; bare <code>/team status</code> shows a joined-room overview when there is more than one membership. Keep it in the terminal, not a new browser dashboard. Participant and thread IDs underlie every action; names are display labels.</p>
+<figure><div class="diagram"><pre aria-label="Proposed detailed team status view"><code><span class="accent">TEAM disc-catalog</span>                           Broker: connected · just updated
+Delivery: manual · Project pause: off       You: app · Local pause: off
+
+PARTICIPANT        CONNECTION       RUNTIME            NEEDS REPLY    UNREAD
+app (you)          connected        working                      0         1
+backend            connected        idle                         1         0
+reviewer           disconnected     unknown                      1         1
+
+<span class="small">Observed runtime above; agent-reported work below:</span>
+app       Implementing cache; nullable-field work blocked on Q-17
+backend   Validating ingestion fixtures
+reviewer  Last reported: reviewing contract v2
+
+<span class="accent">OPEN QUESTIONS · 2</span>
+Q-17  app → backend       Can flight numbers be null?       awaiting reply
+Q-18  backend → reviewer  Is the versioning plan sound?     recipient unavailable
+
+<span class="accent">DISCUSSIONS / DECISIONS · 1</span>
+D-04  Catalog identity · app, backend                      awaiting human approval
+
+<span class="amber">ATTENTION · 1 unavailable recipient · 1 approval</span>
+Inspect a thread · Review attention · Open inbox · Refresh · Close</code></pre></div><figcaption>The reviewer’s disconnect and Q-18 are one attention item, not two duplicate alerts. Status inspection does not wake any model. Action labels illustrate intent; exact interaction and syntax remain proposals.</figcaption></figure>
+<div class="table-wrap"><table><thead><tr><th>Indicator</th><th>Precise meaning</th></tr></thead><tbody>
+<tr><td>Connected</td><td>A live authenticated connection with an unexpired lease. Working, idle, waiting-for-user, and paused are shown separately where observable.</td></tr>
+<tr><td>Disconnected / unknown</td><td>No live connection, expired heartbeat, or unavailable broker. Include last-seen/update time. A broker outage makes cached presence stale; it does not prove everyone left.</td></tr>
+<tr><td>Left team</td><td>An explicit departure, distinct from a transient disconnect. Show in relevant outstanding threads or an inactive roster, rather than inflating current team counts. Messages remain in history; explicit rejoin is required before delivery.</td></tr>
+<tr><td>Unread / pending delivery</td><td>Unread means not explicitly marked read/acknowledged by that participant. Pending delivery means not yet recorded in its agent context. Human inspection alone must not imply the agent read it. The expanded inbox shows both separately.</td></tr>
+<tr><td>Needs reply</td><td>Open requests that explicitly expect this participant’s response, including requests already read. A reply is not automatically a new request. No courtesy ACKs expected.</td></tr>
+<tr><td>Open questions / discussions</td><td>Project totals count distinct open question records and distinct discussion/decision threads, not the sum of per-participant counters. Discussion membership does not imply each participant owes a reply.</td></tr>
+<tr><td>Attention</td><td>Unavailable recipients, overdue requests, pending human approvals, uncertain delivery, or exhausted activation limits. Label the reason; do not conflate transport failure with missing input.</td></tr>
+</tbody></table></div>
+<h3>Unavailable recipient · an actionable notice, not a blocking popup</h3>
+<figure><div class="diagram"><pre aria-label="Proposed unavailable-recipient notice"><code><span class="amber">TEAM disc-catalog · Q-18 needs attention</span>
+reviewer disconnected · last seen 2 minutes ago
+Your question is stored. It has not been delivered to reviewer’s context.
+
+backend → reviewer · “Is the versioning plan sound?”
+
+Proposed review actions:
+  Keep waiting       Answer as human       Redirect…       Cancel request
+
+<span class="small">Local coding can continue. No model is polling for a reply.</span></code></pre></div><figcaption>Show actual delivery state: if already recorded before disconnection, say “recorded; reply outstanding” instead of “not delivered.” Apply the same unavailable-recipient handling to replies, without falsely marking them as requiring another reply.</figcaption></figure>
+<ul>
+<li><strong>Notify in the affected local session.</strong> The sender gets an honest tool result for new sends; later availability changes update a nonblocking notice in its terminal. Attention records are visible from other joined sessions through status. If no relevant UI is connected, preserve them for reconnect—do not pretend the human was notified.</li>
+<li><strong>Handle in-flight questions too.</strong> If a recipient leaves after a request was sent, create the same attention item while input remains outstanding. Being idle is not a failure. Paused recipients are labeled paused; reminders must not bypass pause.</li>
+<li><strong>Avoid alert storms.</strong> Propose a short, configurable grace period for unexpected disconnects, immediate attention for explicit departure, and one persistent item per affected request rather than a popup every heartbeat. An optional response deadline tracks overdue questions independently of presence.</li>
+<li><strong>Redirect only on human choice.</strong> Choose another explicitly joined participant in the same room, retain original sender and thread attribution, and audit the reassignment. If already delivered, forwarding cannot retract the old context; mark who now owns the response and notify affected participants.</li>
+<li><strong>Resolve the old obligation.</strong> A human answer, cancellation, or reassignment updates the request’s state. A late original recipient sees that outcome and should not resume stale work. Human answers are attributable input, not implicit approval of a protected decision.</li>
+</ul>
+<h3>Reconnect · pending messages visible immediately</h3>
+<figure><div class="diagram"><pre aria-label="Proposed reconnection inbox summary"><code><span class="accent">TEAM disc-catalog · Reconnected as reviewer</span>
+1 pending delivery · 1 unread · 1 request needs your reply
+
+Q-18  backend → you   Is the versioning plan sound?    awaiting reply
+
+Open inbox · Inspect thread · Deliver selected to agent
+<span class="small">Automatic wakeups: off. Reconnection has not started a model run.</span></code></pre></div><figcaption>On an authenticated reconnect, refresh the UI from durable mailbox state immediately. With automatic wakeups enabled, only still-open eligible requests pass through the normal identity, pause, boundary, and budget gates.</figcaption></figure>
+<p>Show missed history and current obligations separately. Messages answered by the human, reassigned, cancelled, expired, or already recorded remain inspectable but must not all be replayed into context. Uncertain insertion requires reconciliation or deliberate retry. Reconnecting clears the availability warning; it does not mark the question answered.</p>
+<div class="callout warning"><strong>Selected UI direction, not installed features.</strong><p>The persistent subagent-style widget and detailed <code>/team status</code> are the selected direction. Exact rendering, height bounds, counter semantics, reminder timing, and review interactions still need implementation design. Headless modes need structured status output; missing approval UI always leaves approval pending.</p></div>
+<p class="small">Additional acceptance checks: idle never appears unavailable; broker outage labels cached presence stale; disconnect-after-send creates one attention item; unread and needs-reply counts diverge correctly; redirected requests do not wake the original recipient after reconnect; manual/paused reconnect updates the UI without model execution. Manually check both themes and narrow-terminal layouts.</p>
+</section>
+<section id="discussion">
+<span class="section-no">09 / WHAT TO SETTLE TOGETHER</span>
+<h2>Recommended decisions before implementation.</h2>
+<p class="intro">This document proposes the communication model and UI. The <code>/team</code> command family, persistent subagent-style widget with detail in status, and multiple isolated team rooms are the agreed direction. Durable offline messages and user-visible unavailable-recipient handling are agreed behavior. Exact subcommands, agent tool schemas, rendering, service controls, and persistent configuration remain proposals. Multi-room membership within one session is an additional explicit proposal, not required merely to run separate teams concurrently.</p>
+<div class="grid two">
+<div class="card question"><h3>Transport & ownership</h3><p><strong>Recommendation:</strong> one per-user broker, Unix socket, SQLite. Accept a macOS-first transport, or choose loopback HTTP/event streaming now if Windows/browser access matters soon?</p></div>
+<div class="card question"><h3>Broker startup</h3><p><strong>Resolved:</strong> automatically managed startup and idle shutdown. Explicit startup was an implementation shortcut, not the desired workflow. Maintenance commands remain optional.</p></div>
+<div class="card question"><h3>Default delivery experience</h3><p><strong>Recommendation:</strong> notify + manual delivery first, then optional next-turn delivery. Automatic follow-ups remain a separate opt-in. Should normal user prompts automatically pick up pending questions?</p></div>
+<div class="card question"><h3>First interface & milestone</h3><p><strong>Recommendation:</strong> the brief’s small <code>/team</code> command family and <code>team_status</code>, <code>team_send</code>, <code>team_read</code>, with the <a href="#team-ui">compact widget and status/attention views proposed above</a>. Agree on exact controls before registering them. Add decision tooling after reliable two-session messaging.</p></div>
+</div>
+<div class="callout"><strong>First useful milestone: two terminals, one durable question and reply.</strong><p>Join from different repos → send → see pending notification → deliberately deliver → reply in the same thread → restart and retrieve it. No moderator and no automatic wakeups required to prove the communication path.</p></div>
+<h3>Build in slices, prove the hard boundaries early.</h3>
+<ol><li><strong>Freeze protocol v1:</strong> identity, framing, send semantics, delivery states, and chosen human controls.</li><li><strong>Broker + fake clients:</strong> persistence, idempotency, leases, isolation, reconnect, and storage failure tests.</li><li><strong>Two-session extension:</strong> manual attributable messaging, lifecycle cleanup, crash-window reconciliation, and a live smoke test.</li><li><strong>Controlled automation:</strong> pause/dispatch races, opt-in wakeups, persistent limits, and abort suppression.</li><li><strong>Decision workflow:</strong> human approval first; optional moderator grants and reviewable export second.</li></ol>
+<p class="small">Automated tests use temporary SQLite storage, fake Pi adapters, and fake clocks—no live model credentials. Priority acceptance scenarios: AT-01–05 (transport/lifecycle), AT-06–07 (pause/loops), AT-08–10 (authority), AT-11–15 (recovery/privacy/operation/install). These are planned checks, not completed tests.</p>
+</section>
+<section id="sources">
+<span class="section-no">10 / BASIS & LIMITATIONS</span>
+<h2>Grounded in the handoff and installed Pi APIs.</h2>
+<p>Source of scope and authority: <a href="../PiAgentCoordinationRequirements.md">PiAgentCoordinationRequirements.md</a>, especially architecture (§3), invariants (§6), acceptance scenarios (§7), and staged implementation (§8).</p>
+<p class="small">Reviewed installed Pi README, extensions, session-format, and packages documentation, plus file-trigger, message-renderer, and event-bus examples. Relevant APIs: registerTool/registerCommand, sendMessage, session_start/session_shutdown, agent_settled, and read-only session inspection. Pi’s in-process event bus is not cross-terminal transport; its file-trigger example is a minimal injection example, not a reliable messaging architecture.</p>
+<p class="small">Open implementation proof points: actual context-persistence observation, pause/dispatch linearization, runtime version compatibility, SQLite driver/distribution choice, project-wide numeric budgets, credential/control-channel details, and retry/cancellation UI. These must be specified and tested before claiming the corresponding guarantees. No coordination service or extension has been installed by creating this document.</p>
+</section>
+</main>
+<footer>Communication architecture · Draft for discussion · Self-contained HTML with inline diagrams. No scripts, external fonts, analytics, or network dependencies.</footer>
+</body>
+</html>

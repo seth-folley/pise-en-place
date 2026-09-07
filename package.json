@@ -9,7 +9,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "validate": "npm run typecheck && npm run test"
+    "validate": "npm run typecheck && npm run test",
+    "team:broker": "tsx src/coordination/cli.ts"
   },
   "repository": {
     "type": "git",
@@ -28,9 +29,9 @@
   },
   "homepage": "https://github.com/seth-folley/pise-en-place#readme",
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.84.3",
-    "@earendil-works/pi-coding-agent": "^0.84.3",
-    "@earendil-works/pi-tui": "^0.84.3",
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-tui": "^0.85.1",
     "@types/node": "^25.9.1",
     "typebox": "^1.1.38",
     "typescript": "^6.0.3",
@@ -55,7 +56,8 @@
       "./extensions/productivity/local-share.ts",
       "./extensions/productivity/markdown-output.ts",
       "./extensions/productivity/roadmap-writer.ts",
-      "./extensions/productivity/todos.ts"
+      "./extensions/productivity/todos.ts",
+      "./extensions/coordination/index.ts"
     ],
     "skills": [
       "./skills"
@@ -81,6 +83,7 @@
     "LICENSE"
   ],
   "dependencies": {
+    "tsx": "^4.23.13",
     "yaml": "^2.9.0"
   }
 }

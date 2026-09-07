@@ -85,6 +85,14 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
   }
   ```
 
+### Agent coordination (manual messaging pilot)
+
+- `extensions/coordination/index.ts` adds `/team`, `team_status`, `team_send`, `team_read`, and a persistent team widget.
+- An automatically managed local Unix-socket broker owns SQLite-backed rooms, messages, inboxes, presence, and delivery recovery. Multiple isolated teams can run concurrently; the pilot joins one room per Pi session.
+- Reload Pi, then `/team join <room> --name <name> --role worker`. Joining starts/reuses the broker automatically; it shuts down after 60 seconds without connections. No normal setup/teardown commands.
+- Manual delivery only: no automatic model wakeups, spawning, or moderator/decision approval tools yet. Requires Node 24.15+ and Pi 0.85.1+ on macOS/Linux.
+- See [setup, commands, privacy, recovery, and live smoke test](docs/agent-coordination.md) and [protocol v1](docs/agent-coordination-protocol.md).
+
 ### Productivity helpers
 
 - `extensions/productivity/current-pr.ts` adds `/pr` and the `get_current_branch_pr` tool for GitHub PR lookup via `gh`.
@@ -111,6 +119,8 @@ extensions/
   skills/          skill read tracking and skill update flows
   ui/              status line, response timing, ask_user UI tool
   productivity/    PR lookup, context filtering, local sharing, session helpers, todos, roadmap writer
+  coordination/    explicit team enrollment, manual messaging, inbox/status widget
+src/coordination/  local SQLite broker, socket protocol/client, delivery adapter
 src/shared/        shared implementation helpers used by extensions
 skills/            agent workflows shipped by this package
 themes/            Pi themes shipped by this package
@@ -128,4 +138,4 @@ npm run validate
 
 ## Runtime data
 
-Runtime ledgers and local Pi files are intentionally not committed. Usage and skill-read ledgers are written under `~/.pi/agent/` by the relevant extensions.
+Runtime ledgers and local Pi files are intentionally not committed. Usage and skill-read ledgers are written under `~/.pi/agent/` by the relevant extensions. The coordination broker stores its private database, socket, and control credential under `<Pi user directory>/coordination/`; see the coordination guide before backup, cleanup, or deletion.

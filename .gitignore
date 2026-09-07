@@ -43,6 +43,7 @@ secrets/
 .pi/tmp/
 .pi/usage/
 .pi/skill-reads/
+.pi/coordination/
 usage.jsonl
 usage.sqlite
 skill-reads.jsonl
