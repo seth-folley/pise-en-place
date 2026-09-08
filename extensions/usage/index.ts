@@ -22,6 +22,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { fetchCodexUsageLimits, formatCodexUsageLimits, type CodexUsageLimits } from "../../src/shared/codex-usage-limits.ts";
 import { mergeUsageProjectAttribution, normalizeGitRemote, normalizeUsageTags, readUsageConfig, type UsageConfig } from "../../src/shared/usage-attribution.ts";
 import { getInheritedUsageTags, getUsageSessionState, usageSessionCustomType, type UsageSessionProject, type UsageSessionState } from "../../src/shared/usage-session.ts";
 
@@ -806,6 +807,7 @@ function formatHelp(json: boolean): string {
 			{ command: "/usage model <model>", description: "Show lifetime usage for a model" },
 			{ command: "/usage skills [range]", description: "Show skill usage counts" },
 			{ command: "/usage skills --project", description: "Group skill usage by project" },
+			{ command: "/usage openai", description: "Fetch current OpenAI Codex subscription limits" },
 			{ command: "/usage tag <comma-separated tags>", description: "Add arbitrary tags to subsequent usage in this session" },
 			{ command: "/usage tag --remove <tag>", description: "Remove one active usage tag" },
 			{ command: "/usage tag --clear", description: "Clear active usage tags" },
@@ -1331,6 +1333,62 @@ async function handleUsageCommand(args: string, ctx: ExtensionContext): Promise<
 
 export default function (pi: ExtensionAPI) {
 	let usageSession: UsageSessionState | undefined;
+	type CodexRefreshOutcome = { ok: boolean; error?: string; limits?: CodexUsageLimits };
+	let codexLimitsRefresh: Promise<CodexRefreshOutcome> | undefined;
+	let codexLimitsAbort: AbortController | undefined;
+	let codexLimitsGeneration = 0;
+
+	const refreshCodexLimits = async (ctx: ExtensionContext): Promise<CodexRefreshOutcome> => {
+		if (codexLimitsRefresh) return codexLimitsRefresh;
+		const controller = new AbortController();
+		const generation = codexLimitsGeneration;
+		codexLimitsAbort = controller;
+		const task = (async (): Promise<CodexRefreshOutcome> => {
+			try {
+				const accessToken = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
+				if (controller.signal.aborted || generation !== codexLimitsGeneration) return { ok: false, error: "OpenAI usage request was cancelled" };
+				if (!accessToken) throw new Error("Sign in to the openai-codex provider first");
+				const limits = await fetchCodexUsageLimits(accessToken, { signal: controller.signal });
+				if (controller.signal.aborted || generation !== codexLimitsGeneration) return { ok: false, error: "OpenAI usage request was cancelled" };
+				return { ok: true, limits };
+			} catch (error: any) {
+				return { ok: false, error: error?.message ?? "Unable to retrieve OpenAI usage limits" };
+			} finally {
+				if (codexLimitsAbort === controller) {
+					codexLimitsAbort = undefined;
+					codexLimitsRefresh = undefined;
+				}
+			}
+		})();
+		codexLimitsRefresh = task;
+		return task;
+	};
+
+	const handleCodexLimitsCommand = async (args: string, ctx: ExtensionContext): Promise<boolean> => {
+		const tokens = tokenizeArgs(args);
+		if (tokens[0] !== "openai") return false;
+		const rest = tokens.slice(1);
+		const json = rest.includes("--json");
+		if (rest.some((token) => token !== "--json") || rest.filter((token) => token === "--json").length > 1) {
+			const error = "Usage: /usage openai [--json]";
+			await notifyOutput(ctx, json ? JSON.stringify({ ok: false, error }, null, 2) : error, json);
+			return true;
+		}
+		const generation = codexLimitsGeneration;
+		const outcome = await refreshCodexLimits(ctx);
+		if (generation !== codexLimitsGeneration) return true;
+		if (!outcome.ok) {
+			const error = outcome.error ?? "OpenAI Codex subscription limits are unavailable";
+			await notifyOutput(ctx, json ? JSON.stringify({ ok: false, error }, null, 2) : error, json);
+			return true;
+		}
+		await notifyOutput(
+			ctx,
+			json ? JSON.stringify({ ok: true, limits: outcome.limits }, null, 2) : formatCodexUsageLimits(outcome.limits!),
+			json,
+		);
+		return true;
+	};
 
 	const legacyTags = (ctx: ExtensionContext): string[] => {
 		let tags: string[] = [];
@@ -1422,6 +1480,13 @@ export default function (pi: ExtensionAPI) {
 		await initializeUsageSession(ctx);
 	});
 
+	pi.on("session_shutdown", async () => {
+		codexLimitsGeneration += 1;
+		codexLimitsAbort?.abort();
+		codexLimitsAbort = undefined;
+		codexLimitsRefresh = undefined;
+	});
+
 	pi.on("message_end", async (event, ctx) => {
 		// Only assistant responses have provider usage. Tool results and user messages
 		// are ignored; additional assistant turns caused by tool calls are counted if
@@ -1441,6 +1506,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Show cross-session token usage and estimated spending",
 		handler: async (args, ctx) => {
 			try {
+				if (await handleCodexLimitsCommand(args, ctx)) return;
 				const parsed = parseUsageArgs(args);
 				if (parsed.mode === "tag" || (parsed.error && tokenizeArgs(args)[0] === "tag")) {
 					await handleTagCommand(parsed, ctx);

@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Command reference · pise-en-place</title>
+<style>
+:root{--bg:#0f1420;--panel:#171f2d;--panel2:#202b3c;--ink:#edf3fb;--muted:#aebcd0;--line:#33445a;--accent:#75e0bd;--blue:#8bbcff;--amber:#f4c471;--code:#0b111b;--shadow:rgba(0,0,0,.22)}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.68 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--blue);text-underline-offset:3px}a:focus-visible{outline:3px solid var(--accent);outline-offset:4px}.layout{display:grid;grid-template-columns:270px minmax(0,880px);gap:54px;max-width:1260px;margin:auto;padding:0 32px}.sidebar{position:sticky;top:0;height:100vh;padding:34px 0;overflow:auto}.brand{display:block;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.15em;text-transform:uppercase;text-decoration:none;margin-bottom:10px}.sidebar-title{font-size:22px;font-weight:760;letter-spacing:-.025em;margin-bottom:24px}.nav{display:flex;flex-direction:column;border-left:1px solid var(--line)}.nav a{color:var(--muted);text-decoration:none;font-size:13px;line-height:1.35;padding:6px 12px}.nav a:hover{color:var(--accent);background:var(--panel)}.nav .depth-2{color:var(--ink);font-weight:700;margin-top:9px}.nav .depth-3{padding-left:24px}.source{margin-top:26px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}article{min-width:0;padding:70px 0 100px}h1{font-size:clamp(40px,7vw,68px);line-height:1.03;letter-spacing:-.05em;margin:0 0 22px}h1+p{font-size:19px;color:var(--muted);max-width:760px;margin-bottom:40px}h2{font-size:31px;line-height:1.2;letter-spacing:-.03em;margin:68px 0 24px;padding-top:18px;border-top:1px solid var(--line)}h3{font-size:23px;line-height:1.3;letter-spacing:-.02em;margin:44px 0 16px}h4{font-size:17px;margin:30px 0 12px;color:var(--accent)}h1,h2,h3,h4{position:relative}.anchor{opacity:0;text-decoration:none;color:var(--muted);font-size:.65em;margin-left:9px}h1:hover .anchor,h2:hover .anchor,h3:hover .anchor,h4:hover .anchor,.anchor:focus{opacity:1}p{margin:0 0 17px}strong{color:var(--ink)}ul,ol{padding-left:25px;margin:14px 0 22px}li{margin:7px 0}li::marker{color:var(--accent)}code{font:.88em ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--code);padding:2px 6px;border:1px solid rgba(117,224,189,.12);border-radius:5px;overflow-wrap:anywhere}pre{margin:16px 0 24px;padding:18px 21px;background:var(--code);border:1px solid var(--line);border-radius:11px;overflow:auto;box-shadow:0 12px 30px var(--shadow)}pre code{padding:0;border:0;background:none;white-space:pre;overflow-wrap:normal}.table-wrap{overflow:auto}table{border-collapse:separate;border-spacing:0;width:100%;margin:22px 0 34px;font-size:14px;border:1px solid var(--line);border-radius:11px;overflow:hidden}th,td{text-align:left;vertical-align:top;padding:13px 15px;border-bottom:1px solid var(--line)}th{background:var(--panel2);color:var(--ink);font-size:12px;text-transform:uppercase;letter-spacing:.06em}td{color:var(--muted)}td:first-child{color:var(--ink);font-weight:650}tr:last-child td{border-bottom:0}blockquote{margin:22px 0;padding:16px 20px;background:var(--panel);border-left:3px solid var(--accent);border-radius:0 9px 9px 0;color:var(--muted)}hr{border:0;border-top:1px solid var(--line);margin:48px 0}
+@media(prefers-color-scheme:light){:root{--bg:#f7f9fc;--panel:#fff;--panel2:#edf2f8;--ink:#172235;--muted:#53647a;--line:#becbd9;--accent:#087158;--blue:#245fa5;--amber:#8c5b10;--code:#eef3f8;--shadow:rgba(30,50,75,.1)}}
+@media(max-width:900px){.layout{display:block;padding:0 22px}.sidebar{position:relative;height:auto;padding:28px 0 0}.sidebar-title{margin-bottom:12px}.nav{display:none}.source{margin-top:12px;padding-top:12px}article{padding-top:38px}h2{margin-top:50px}}
+@media print{body{--bg:#fff;--panel:#fff;--panel2:#f2f4f6;--ink:#111;--muted:#444;--line:#aaa;--accent:#075d4a;--blue:#174c89;--code:#f3f3f3;font-size:11px}.layout{display:block;max-width:none}.sidebar{display:none}article{padding:0}h1{font-size:38px}h2{font-size:24px;break-after:avoid}h3{font-size:18px;break-after:avoid}pre,table{break-inside:avoid;box-shadow:none}.anchor{display:none}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+<a class="brand" href="#command-reference">pise-en-place</a>
+<div class="sidebar-title">Command reference</div>
+<nav class="nav" aria-label="Command reference sections"><a class="depth-2" href="#quick-reference">Quick reference</a>
+<a class="depth-2" href="#usage-and-skills">Usage and skills</a>
+<a class="depth-3" href="#usage">/usage</a>
+<a class="depth-3" href="#update-skills">/update-skills</a>
+<a class="depth-2" href="#evaluation-and-orchestration">Evaluation and orchestration</a>
+<a class="depth-3" href="#skill-eval">/skill-eval</a>
+<a class="depth-3" href="#subagents">/subagents</a>
+<a class="depth-2" href="#team-coordination">Team coordination</a>
+<a class="depth-3" href="#team">/team</a>
+<a class="depth-2" href="#session-and-project-productivity">Session and project productivity</a>
+<a class="depth-3" href="#todos">/todos</a>
+<a class="depth-3" href="#context">/context</a>
+<a class="depth-3" href="#pr">/pr</a>
+<a class="depth-3" href="#jira-worktree">/jira-worktree</a>
+<a class="depth-3" href="#share-local">/share-local</a>
+<a class="depth-3" href="#md">/md</a>
+<a class="depth-3" href="#roadmap">/roadmap</a>
+<a class="depth-2" href="#ui-commands">UI commands</a>
+<a class="depth-3" href="#statusline">/statusline</a>
+<a class="depth-3" href="#statusline-colors">/statusline-colors</a>
+<a class="depth-3" href="#response-time">/response-time</a>
+<a class="depth-2" href="#maintaining-this-reference">Maintaining this reference</a></nav>
+<p class="source">Generated from <a href="commands.md">commands.md</a>. The Markdown file is the agent-friendly source of truth.</p>
+</aside>
+<article><h1 id="command-reference">Command reference<a class="anchor" href="#command-reference" aria-label="Link to this section">#</a></h1>
+<p>This document lists the slash commands provided by <code>pise-en-place</code>. It does not include Pi&#39;s built-in commands or package tools invoked by the model. Run a command without required arguments, or with <code>--help</code> where supported, for inline guidance.</p>
+<p>After changing or installing extensions, run Pi&#39;s built-in <code>/reload</code> command.</p>
+<h2 id="quick-reference">Quick reference<a class="anchor" href="#quick-reference" aria-label="Link to this section">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="#usage"><code>/usage</code></a></td>
+<td>Usage ledger reports, Codex subscription limits, session tags, and skill-read reports</td>
+</tr>
+<tr>
+<td><a href="#update-skills"><code>/update-skills</code></a></td>
+<td>Check, select, and install agent skill updates</td>
+</tr>
+<tr>
+<td><a href="#skill-eval"><code>/skill-eval</code></a></td>
+<td>Validate, run, and review skill evaluations</td>
+</tr>
+<tr>
+<td><a href="#subagents"><code>/subagents</code></a></td>
+<td>List retained child sessions created by the subagent tool</td>
+</tr>
+<tr>
+<td><a href="#team"><code>/team</code></a></td>
+<td>Join and manage an isolated coordination room</td>
+</tr>
+<tr>
+<td><a href="#todos"><code>/todos</code></a></td>
+<td>Manage the current session&#39;s todo list and widget</td>
+</tr>
+<tr>
+<td><a href="#context"><code>/context</code></a></td>
+<td>Inspect or configure context-file, skill, and private-guidance filtering</td>
+</tr>
+<tr>
+<td><a href="#pr"><code>/pr</code></a></td>
+<td>Show the GitHub PR for the current branch</td>
+</tr>
+<tr>
+<td><a href="#jira-worktree"><code>/jira-worktree</code></a></td>
+<td>Create and open a Supacode worktree for a Jira item</td>
+</tr>
+<tr>
+<td><a href="#share-local"><code>/share-local</code></a></td>
+<td>Export the current session to local HTML</td>
+</tr>
+<tr>
+<td><a href="#md"><code>/md</code></a></td>
+<td>Render a Markdown file in the conversation</td>
+</tr>
+<tr>
+<td><a href="#roadmap"><code>/roadmap</code></a></td>
+<td>Delegate a focused <code>ROADMAP.md</code> update</td>
+</tr>
+<tr>
+<td><a href="#statusline"><code>/statusline</code></a></td>
+<td>Cycle the custom footer or trace context readings</td>
+</tr>
+<tr>
+<td><a href="#statusline-colors"><code>/statusline-colors</code></a></td>
+<td>Preview context-indicator colors</td>
+</tr>
+<tr>
+<td><a href="#response-time"><code>/response-time</code></a></td>
+<td>Toggle response-duration reporting</td>
+</tr>
+</tbody></table>
+<h2 id="usage-and-skills">Usage and skills<a class="anchor" href="#usage-and-skills" aria-label="Link to this section">#</a></h2>
+<h3 id="usage"><code>/usage</code><a class="anchor" href="#usage" aria-label="Link to this section">#</a></h3>
+<p>Tracks finalized assistant-response metadata in <code>~/.pi/agent/usage/ledger.jsonl</code> and reports it without storing prompt or response content.</p>
+<h4 id="summaries">Summaries<a class="anchor" href="#summaries" aria-label="Link to this section">#</a></h4>
+<pre><code class="language-text">/usage
+/usage today
+/usage week
+/usage month
+/usage lifetime
+</code></pre>
+<p><code>/usage</code> defaults to month-to-date. Summary filters can be combined where meaningful:</p>
+<pre><code class="language-text">/usage month --project &lt;project&gt;
+/usage today --model &lt;model&gt;
+/usage lifetime --project &lt;project&gt; --model &lt;model&gt;
+/usage month --branch
+/usage month --project &lt;project&gt; --branch &lt;branch&gt;
+</code></pre>
+<p>A bare <code>--branch</code> resolves the current workspace&#39;s project and Git branch. An explicit branch requires a project because branch names are not globally unique.</p>
+<h4 id="grouped-reports">Grouped reports<a class="anchor" href="#grouped-reports" aria-label="Link to this section">#</a></h4>
+<pre><code class="language-text">/usage report [today|week|month|lifetime]
+/usage report [range] --project &lt;project&gt;
+/usage report [range] --model &lt;model&gt;
+/usage report [range] --visual
+/usage report [range] --json
+</code></pre>
+<p>Reports group usage by provider, model, and project and show the most expensive recorded responses. <code>--visual</code> produces terminal-friendly horizontal graphs and cannot be combined with <code>--json</code>.</p>
+<h4 id="projects-and-models">Projects and models<a class="anchor" href="#projects-and-models" aria-label="Link to this section">#</a></h4>
+<pre><code class="language-text">/usage project
+/usage project --list
+/usage project &lt;project&gt;
+/usage project &lt;project&gt; --branch [&lt;branch&gt;]
+/usage model --list
+/usage model &lt;model&gt;
+</code></pre>
+<p>A project command without a project opens an interactive selector. Project reports include branch and tag breakdowns when available.</p>
+<h4 id="openai-codex-subscription-limits">OpenAI Codex subscription limits<a class="anchor" href="#openai-codex-subscription-limits" aria-label="Link to this section">#</a></h4>
+<pre><code class="language-text">/usage openai
+/usage openai --json
+</code></pre>
+<p>Fetches the current plan type, rolling usage windows, reset times, and model-specific additional limits returned by OpenAI. Each invocation makes a fresh request; there is no persistent widget, startup request, post-response polling, or result cache.</p>
+<p>Credentials, raw responses, and limit readings stay in memory and are not added to the ledger or session file. The integration reuses Pi&#39;s <code>openai-codex</code> OAuth login and calls OpenAI&#39;s undocumented <code>/backend-api/wham/usage</code> endpoint. If it changes or is unavailable, the command reports unavailable rather than zero.</p>
+<h4 id="skill-reads">Skill reads<a class="anchor" href="#skill-reads" aria-label="Link to this section">#</a></h4>
+<pre><code class="language-text">/usage skills [today|week|month|lifetime]
+/usage skills --project &lt;project&gt;
+/usage skills --project
+/usage skills --json
+</code></pre>
+<p>Reports explicit skill commands and skill-file reads recorded in <code>~/.pi/agent/skill-reads/ledger.jsonl</code>. A bare <code>--project</code> groups by project; a value filters to one project. Prompt and skill contents are not stored.</p>
+<h4 id="session-tags">Session tags<a class="anchor" href="#session-tags" aria-label="Link to this section">#</a></h4>
+<pre><code class="language-text">/usage tag &lt;comma-separated tags&gt;
+/usage tag --list
+/usage tag --remove &lt;tag&gt;
+/usage tag --clear
+</code></pre>
+<p>Tags are session-scoped and apply only to subsequent usage records. They are stored in private Pi session entries so they survive navigation within that session. Quote a tag containing spaces.</p>
+<h4 id="clearing-the-ledger">Clearing the ledger<a class="anchor" href="#clearing-the-ledger" aria-label="Link to this section">#</a></h4>
+<pre><code class="language-text">/usage clear
+/usage clear --yes
+</code></pre>
+<p>Deletes <code>~/.pi/agent/usage/ledger.jsonl</code>. Interactive use asks for confirmation; <code>--yes</code> is required when no confirmation UI is available.</p>
+<p>Most <code>/usage</code> outputs support <code>--json</code>. See <a href="usage-tracking.md">usage tracking</a> and <a href="skill-read-tracking.md">skill-read tracking</a> for the complete data model and privacy details.</p>
+<h3 id="update-skills"><code>/update-skills</code><a class="anchor" href="#update-skills" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/update-skills
+/update-skills --check
+/update-skills --interactive
+/update-skills --respect-interval
+</code></pre>
+<p>Aliases <code>check</code>/<code>-c</code> and <code>interactive</code>/<code>-i</code> are accepted.</p>
+<ul>
+<li>No option: runs the local skill sync script with <code>--force</code>.</li>
+<li><code>--respect-interval</code>: runs the sync script without forcing its configured interval.</li>
+<li><code>--check</code>: checks version-pinned manifest sources for newer refs without installing them.</li>
+<li><code>--interactive</code>: requires interactive UI, opens a selector, updates accepted manifest refs, and syncs the selected changes.</li>
+</ul>
+<p>The extension also checks pinned versions once at normal session startup, but skips duplicate checks on <code>/reload</code>. It uses <code>~/.agents/skills/manifest.json</code> by default and delegates mutations/install work to the scripts under <code>~/.agents/scripts/</code>.</p>
+<h2 id="evaluation-and-orchestration">Evaluation and orchestration<a class="anchor" href="#evaluation-and-orchestration" aria-label="Link to this section">#</a></h2>
+<h3 id="skill-eval"><code>/skill-eval</code><a class="anchor" href="#skill-eval" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/skill-eval validate &lt;eval.yaml&gt;
+/skill-eval run &lt;eval.yaml&gt;
+/skill-eval review &lt;run-id|path|latest&gt;
+</code></pre>
+<ul>
+<li><code>validate</code> resolves paths and validates the eval configuration, replacement/removal declarations, optional review rubric, timeout policy, and dialog mode. It does not execute variants.</li>
+<li><code>run</code> requires TUI mode and opens a full-screen monitor. Variants run sequentially in disposable Git workspaces.</li>
+<li><code>review</code> requires the current agent to be idle. It resolves retained evidence and queues the <code>skill-eval-reviewer</code> workflow in the current session.</li>
+</ul>
+<p>Runs are retained under <code>~/.pi/agent/skill-evals/&lt;run-id&gt;/</code> with configuration snapshots, events, native Pi sessions, status/evidence files, and Markdown/HTML reports. Failed runs also retain structured failure evidence. See <a href="skill-evaluation.md">skill evaluation</a>.</p>
+<h3 id="subagents"><code>/subagents</code><a class="anchor" href="#subagents" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/subagents
+</code></pre>
+<p>Lists child sessions retained by the package&#39;s <code>subagent</code> tool for the current parent session, including the command needed to inspect each child. The command itself is read-only. Child sessions live under <code>~/.pi/agent/subagent-sessions/&lt;parent-session-id&gt;/</code>.</p>
+<h2 id="team-coordination">Team coordination<a class="anchor" href="#team-coordination" aria-label="Link to this section">#</a></h2>
+<h3 id="team"><code>/team</code><a class="anchor" href="#team" aria-label="Link to this section">#</a></h3>
+<p><code>/team</code> without arguments is equivalent to <code>/team status</code>. One Pi session can join one room; separate Pi sessions can join other rooms.</p>
+<pre><code class="language-text">/team help
+/team join &lt;room&gt; --name &lt;name&gt; [--role &lt;role&gt;] [--rejoin]
+/team leave
+/team status [joined-room] [participant-id]
+/team inbox [cursor] [--history]
+/team thread &lt;thread-id&gt; [cursor]
+/team read &lt;message-id&gt;
+/team deliver &lt;message-id&gt;
+/team reconcile &lt;message-id&gt;
+/team retry &lt;message-id&gt;
+/team review &lt;message-id&gt;
+/team resolve &lt;thread-id&gt;
+/team pause [local|room|project]
+/team resume [local|room|project]
+</code></pre>
+<h4 id="membership-and-inspection">Membership and inspection<a class="anchor" href="#membership-and-inspection" aria-label="Link to this section">#</a></h4>
+<ul>
+<li><code>join</code> starts or reuses the local broker, confirms enrollment, and stores the binding in the Pi session. The role defaults to <code>worker</code>. <code>--rejoin</code> recovers the mailbox for an existing disconnected/left identity; it cannot take over a live identity.</li>
+<li><code>leave</code> stops delivery to this session but retains broker history and pending messages for an explicit rejoin.</li>
+<li><code>status</code> shows roster, presence, current work/blockers, requests, and attention counts. To request a participant&#39;s full work text, supply the joined room name/ID followed by the participant ID.</li>
+<li><code>inbox</code> shows active items by default; <code>--history</code> includes inactive and acknowledged history. <code>thread</code> pages one discussion. <code>read</code> retrieves one full message without delivering it to the agent.</li>
+</ul>
+<h4 id="delivery-and-recovery">Delivery and recovery<a class="anchor" href="#delivery-and-recovery" aria-label="Link to this section">#</a></h4>
+<ul>
+<li><code>deliver</code> records one addressed message into agent context at an idle boundary without immediately running the model.</li>
+<li><code>reconcile</code> checks durable delivery evidence and avoids duplicate insertion when a matching receipt exists.</li>
+<li><code>retry</code> is an explicit recovery action for an uncertain delivery and may duplicate prior work; it requires confirmation when no receipt is found.</li>
+<li><code>review</code> opens a TUI workflow to keep waiting, answer as a human, redirect within the room, or cancel a request.</li>
+<li><code>resolve</code> closes a discussion&#39;s open response obligations. It is not protected decision approval.</li>
+</ul>
+<h4 id="pausing-and-automatic-behavior">Pausing and automatic behavior<a class="anchor" href="#pausing-and-automatic-behavior" aria-label="Link to this section">#</a></h4>
+<ul>
+<li><code>pause</code>/<code>resume</code> default to the local participant. <code>room</code> is broker-wide; the currently accepted <code>project</code> spelling behaves as an alias for the joined room rather than identifying a separate project scope.</li>
+<li>Eligible questions, decision requests, requested replies, and actionable handoffs can wake an idle recipient automatically. Informational messages do not.</li>
+<li>Busy work is not interrupted. Aborting an automatic run pauses local automation.</li>
+<li>Automation is bounded to 100 activations per room in a rolling hour, with no lifetime thread cap.</li>
+</ul>
+<p>Membership entries and inspection/delivery evidence are durable, and the broker retains room history and receipts. Automatic membership restoration currently occurs only during <code>/reload</code>; ordinary new/resume/fork startup does not auto-enroll, so explicitly rejoin when needed. The private broker database, socket, and credentials live under the Pi user directory. Human control operations require interactive TUI confirmation. Coordination requires Node 24.15+, Pi 0.85.1+, and macOS or Linux. See <a href="agent-coordination.md">agent coordination</a> and the <a href="agent-coordination-protocol.md">coordination protocol</a>.</p>
+<h2 id="session-and-project-productivity">Session and project productivity<a class="anchor" href="#session-and-project-productivity" aria-label="Link to this section">#</a></h2>
+<h3 id="todos"><code>/todos</code><a class="anchor" href="#todos" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/todos
+/todos list
+/todos show
+/todos hide
+/todos toggle-ui
+/todos add &lt;text&gt;
+/todos done &lt;id&gt;
+/todos undone &lt;id&gt;
+/todos toggle &lt;id&gt;
+/todos edit &lt;id&gt; &lt;text&gt;
+/todos remove &lt;id&gt;
+/todos clear
+</code></pre>
+<p><code>/todos</code> toggles the widget when todos exist. Mutations are appended as private custom session entries, so the list follows the current session branch and is reconstructed after resume or tree navigation. Widget visibility itself is process-memory state and is not stored with the todo data. <code>list</code> is read-only. Todo IDs may be written as <code>1</code> or <code>#1</code>.</p>
+<h3 id="context"><code>/context</code><a class="anchor" href="#context" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/context
+/context status
+/context system-prompt
+/context project config
+</code></pre>
+<ul>
+<li>No argument or <code>status</code>: shows project detection, active filtering, visible/ignored context files and skills, and private-guidance status.</li>
+<li><code>system-prompt</code>: displays the effective system prompt after this extension&#39;s context/skill filtering and private-guidance injection. Treat this output as potentially sensitive.</li>
+<li><code>project config</code>: requires interactive UI and opens a questionnaire for enabling the project rule and selecting ignored context files and skills.</li>
+</ul>
+<p>Project filter rules are written to global <code>~/.pi/agent/settings.json</code> under <code>contextFileFilter</code>, keyed by detected project identity. Private guidance is configured separately in <code>~/.pi/agent/projects.json</code> through each project&#39;s <code>additional_guidance</code> path and is never copied into a ledger. See <a href="private-guidance.md">private guidance</a>.</p>
+<h3 id="pr"><code>/pr</code><a class="anchor" href="#pr" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/pr
+</code></pre>
+<p>Uses <code>git</code> and authenticated GitHub CLI (<code>gh</code>) to find the pull request associated with the current branch, then displays its metadata. It is read-only and requires a Git repository with a GitHub remote.</p>
+<h3 id="jira-worktree"><code>/jira-worktree</code><a class="anchor" href="#jira-worktree" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/jira-worktree &lt;JIRA-KEY&gt;
+</code></pre>
+<p>Requires interactive UI, a selected model, a Git repository, authenticated <code>acli</code>, <code>supacode</code>, and <code>pi</code> executables.</p>
+<ol>
+<li>Reads the Jira item and repository root.</li>
+<li>Runs an isolated, no-tools Pi process to suggest concise branch slugs.</li>
+<li>Lets the user select or enter a slug.</li>
+<li>Creates a Supacode worktree using the package&#39;s branch convention.</li>
+<li>Opens a new Supacode tab with Pi started on the Jira context.</li>
+</ol>
+<p>This command creates a Git worktree and starts another Pi session.</p>
+<h3 id="share-local"><code>/share-local</code><a class="anchor" href="#share-local" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/share-local [output-path]
+</code></pre>
+<p>Waits for the agent to become idle, exports the complete file-backed session to HTML, and prints an openable local link. A relative path is resolved from the current working directory; <code>.html</code> is added when omitted. Without a path, output goes under <code>~/.pi/agent/sessions/transcripts/</code> (or the configured Pi agent directory). In-memory sessions cannot be exported.</p>
+<p>The generated HTML contains conversation content and should be treated as private unless deliberately shared.</p>
+<h3 id="md"><code>/md</code><a class="anchor" href="#md" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/md &lt;path-to-markdown-file&gt;
+</code></pre>
+<p>Reads and renders a <code>.md</code> or <code>.markdown</code> file as a custom conversation message. Relative paths resolve from the current working directory, <code>~/</code> is expanded, and a whole quoted path is accepted. The command is read-only, but the rendered file content becomes part of the visible session transcript.</p>
+<h3 id="roadmap"><code>/roadmap</code><a class="anchor" href="#roadmap" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/roadmap &lt;change request&gt;
+/roadmap --help
+</code></pre>
+<p>Requires <code>ROADMAP.md</code> in the current working directory. It launches an isolated non-interactive Pi process with only <code>read</code>, <code>edit</code>, and <code>write</code>, instructing it to update the roadmap and normally no other file. The child has no session, context files, skills, templates, themes, or other extensions except usage tracking. The command can modify <code>ROADMAP.md</code> and has a ten-minute timeout.</p>
+<h2 id="ui-commands">UI commands<a class="anchor" href="#ui-commands" aria-label="Link to this section">#</a></h2>
+<h3 id="statusline"><code>/statusline</code><a class="anchor" href="#statusline" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/statusline
+/statusline debug
+</code></pre>
+<p>Without arguments, cycles <code>dracula → minimal → off → dracula</code>. The selection is in memory and resets with the extension process.</p>
+<p><code>debug</code> starts an in-memory trace of context-usage readings. Run it again to stop tracing and display up to the latest 100 samples. Traces contain event names, context token/percentage readings, and branch-entry counts; they are not persisted.</p>
+<h3 id="statusline-colors"><code>/statusline-colors</code><a class="anchor" href="#statusline-colors" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/statusline-colors
+</code></pre>
+<p>Toggles an above-editor preview of the colors used for unknown, low, medium, warm, limit, and high context percentages. The preview state is in memory only.</p>
+<h3 id="response-time"><code>/response-time</code><a class="anchor" href="#response-time" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/response-time
+</code></pre>
+<p>Toggles response-duration reporting, which starts enabled. While enabled, the footer status shows when the agent is responding and the duration of the last completed low-level agent run. The enabled state and timing history are in memory only.</p>
+<h2 id="maintaining-this-reference">Maintaining this reference<a class="anchor" href="#maintaining-this-reference" aria-label="Link to this section">#</a></h2>
+<p>When adding, removing, or changing a <code>pi.registerCommand(...)</code> surface under <code>extensions/</code>, update this Markdown source and regenerate <code>commands.html</code> in the same change. Source code remains authoritative when behavior and documentation disagree.</p>
+</article>
+</div>
+</body>
+</html>

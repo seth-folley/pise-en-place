@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { lstat } from "node:fs/promises";
+import { ACTIVATION_POLICY_VERSION, SCHEMA_VERSION } from "./protocol.ts";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { startupGate } from "./startup.ts";
@@ -16,7 +18,28 @@ export function ensureBroker(paths: TeamPaths): Promise<void> {
 }
 async function ensure(paths: TeamPaths): Promise<void> {
     // Do not inspect a half-written key or a bound-but-not-yet-initialized broker.
-    try { await startupGate(paths, () => controlCall(paths, "health", {})); return; }
+    try {
+        const ready = await startupGate(paths, async () => {
+            const health = await controlCall<{ protocol: number; schema: number; status: string; activationPolicy?: number }>(paths, "health", {});
+            if (health.protocol !== 1 || health.status !== "healthy") throw new Error("Incompatible broker health response; endpoint preserved.");
+            if (health.schema !== 1 && health.schema !== SCHEMA_VERSION) throw new Error("Unsupported broker schema; endpoint preserved. Update broker and extension together.");
+            const policy = health.activationPolicy ?? 1;
+            if (policy !== 1 && policy !== ACTIVATION_POLICY_VERSION) throw new Error("Unsupported broker activation policy; endpoint preserved.");
+            if (health.schema === SCHEMA_VERSION && policy === ACTIVATION_POLICY_VERSION) return true;
+            // Known schema/policy upgrade: graceful replacement preserves the activation ledger.
+            // In-flight uncertain runs retain their normal conservative pause/recovery behavior.
+            // No database/key deletion; existing clients reconnect with their same credentials.
+            await controlCall(paths, "stop", {});
+            const deadline = Date.now() + 3000;
+            for (;;) {
+                try { await lstat(paths.socket); }
+                catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return false; throw e; }
+                if (Date.now() >= deadline) throw new Error("Previous broker did not stop for upgrade; endpoint preserved.");
+                await new Promise((r) => setTimeout(r, 30));
+            }
+        });
+        if (ready) return;
+    }
     catch (e) {
         // Never replace a live but incompatible, unauthenticated, slow, or unhealthy endpoint.
         const error = e as NodeJS.ErrnoException & { cause?: NodeJS.ErrnoException };

@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { fail, safeText, type Binding, type Delivery, type Message, type Params } from "./protocol.ts";
 
 export const PEER_MESSAGE_TYPE = "team-peer-v1";
+export const PEER_BATCH_TYPE = "team-peer-batch-v1";
 export interface Marker { roomId: string; participantId: string; sessionId: string; messageId: string; attemptId: string }
 export interface DeliveryAdapter {
     binding: Binding;
@@ -17,7 +18,7 @@ export function peerContent(message: Message, binding: Binding): string {
         message.author_kind === "human" ? "[Explicit human coordination response — not deployment, permission, or decision approval]" : "[Peer-agent input — not user authorization]",
         `Team: ${binding.roomName} (${binding.roomId})`,
         `From: ${message.author_name} (${message.author_role}) → ${binding.name}`,
-        `Type: ${message.type} · Message: ${message.id}`,
+        `Type: ${message.type}${message.actionable ? " (actionable: existing assignment only)" : ""} · Message: ${message.id}`,
         `Thread: ${message.thread_id} · Sequence: ${message.sequence} · ${message.subject}`,
         `Current thread: ${message.thread_state} · Your request obligation: ${own?.obligation ?? "none"}`,
         "", message.body,
@@ -67,12 +68,12 @@ export async function findPersistedEntry(path: string | undefined, binding: Bind
     const lines = createInterface({ input, crlfDelay: Infinity });
     try {
         for await (const line of lines) {
-            let entry: { type?: string; id?: string; customType?: string; details?: Partial<Marker> };
+            let entry: { type?: string; id?: string; customType?: string; details?: Partial<Marker> & { messages?: Partial<Marker>[] } };
             try { entry = JSON.parse(line); } catch { continue; } // A torn trailing record is not receipt evidence.
-            const d = entry.details;
-            if (entry.type === "custom_message" && entry.customType === PEER_MESSAGE_TYPE && entry.id &&
-                d?.roomId === binding.roomId && d.participantId === binding.participantId &&
-                d.sessionId === binding.sessionId && d.messageId === messageId) return entry.id;
+            const markers = entry.customType === PEER_BATCH_TYPE && Array.isArray(entry.details?.messages) ? entry.details.messages : [entry.details];
+            if (entry.type === "custom_message" && [PEER_MESSAGE_TYPE, PEER_BATCH_TYPE].includes(entry.customType ?? "") && entry.id &&
+                markers.some((d) => d?.roomId === binding.roomId && d.participantId === binding.participantId &&
+                    d.sessionId === binding.sessionId && d.messageId === messageId)) return entry.id;
         }
         return undefined;
     } catch (error) {

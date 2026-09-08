@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 export const VERSION = 1;
+export const SCHEMA_VERSION = 2;
+export const ACTIVATION_POLICY_VERSION = 2;
 export const MAX_FRAME_BYTES = 256 * 1024;
 export const MAX_BODY_BYTES = 16 * 1024;
 export const LEASE_MS = 20_000;
@@ -20,7 +22,7 @@ export interface Room { id: string; name: string; paused: number }
 export interface Participant {
     id: string; room_id: string; name: string; role: string; session_id: string;
     joined: number; paused: number; runtime: Runtime; last_seen: number;
-    connection_id: string | null; generation: number; summary: string; blocker: string;
+    connection_id: string | null; generation: number; summary: string; blocker: string; pause_reason: string;
 }
 export interface ParticipantStatus extends Omit<Participant, "connection_id" | "generation" | "session_id"> {
     presence: "connected" | "disconnected" | "left"; pending: number; unread: number; needsReply: number; workTruncated: boolean;
@@ -33,6 +35,7 @@ export interface Delivery {
 export interface Message {
     id: string; room_id: string; thread_id: string; sequence: number; sender_id: string;
     author_name: string; author_role: string; author_kind: "peer" | "human";
+    actionable: boolean;
     type: MessageType; body: string; reply_to: string | null; references: string[]; created_at: number;
     subject: string; thread_state: "open" | "resolved";
     deliveries: (Delivery & { recipientName: string; presence: string })[];
@@ -43,6 +46,7 @@ export interface Status {
     room: Room; you: string; participants: ParticipantStatus[];
     questions: number; discussions: number; attention: number;
     observedAt: number;
+    automation: { roomUsed: number; roomLimit: number; threadLimit: number | null; blocked: number };
 }
 export interface WorkerActor { kind: "worker"; participantId: string; roomId: string; sessionId: string; generation: number; connectionId: string }
 export interface ControlActor { kind: "control" }

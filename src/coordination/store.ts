@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { AutomationStore, interruptActivations, migrateAutomation, ROOM_WAKE_LIMIT, THREAD_WAKE_LIMIT } from "./automation-store.ts";
 import {
     fail, fields, flag, integer, LEASE_MS, MAX_BODY_BYTES, MESSAGE_TYPES, slug, strings, text,
     type Actor, type Credential, type Delivery, type Message, type MessageSummary, type Page,
@@ -12,7 +13,7 @@ export function secretMatches(value: string, expected: string): boolean {
 }
 type ParticipantRow = Participant & { token_hash: string };
 type MessageRow = Omit<Message, "references" | "deliveries"> & { references_json: string; ordinal: number };
-const SEND_FIELDS = ["roomId", "idempotencyKey", "recipients", "type", "body", "subject", "threadId", "replyTo", "references"];
+const SEND_FIELDS = ["roomId", "idempotencyKey", "recipients", "type", "body", "subject", "threadId", "replyTo", "references", "actionable"];
 function workPreview(value: string): string {
     let out = "";
     for (const char of value.replace(/\s+/g, " ")) {
@@ -30,7 +31,7 @@ export class TeamStore {
         try {
             this.db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;");
             const version = this.one<{ user_version: number }>("PRAGMA user_version")!.user_version;
-            if (version !== 0 && version !== 1) fail("SCHEMA", `Unsupported database schema ${version}; preserve the database and use a compatible broker.`);
+            if (![0, 1, 2].includes(version)) fail("SCHEMA", `Unsupported database schema ${version}; preserve the database and use a compatible broker.`);
             this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
             if (version === 0) this.transaction(() => {
                 this.db.exec(`
@@ -73,7 +74,9 @@ export class TeamStore {
                     PRAGMA user_version=1;
                 `);
             });
+            if (version < 2) this.transaction(() => migrateAutomation(this.db));
             this.transaction(() => {
+                interruptActivations(this.db);
                 this.db.exec("UPDATE participants SET connection_id=NULL,runtime='unknown'; UPDATE deliveries SET state='uncertain',error='Broker restarted during delivery' WHERE state IN ('claimed','queued');");
             });
         } catch (error) { this.db.close(); throw error; }
@@ -134,6 +137,7 @@ export class TeamStore {
             const token = randomBytes(32).toString("hex");
             if (existing) {
                 this.run("UPDATE participants SET session_id=?,token_hash=?,joined=1,connection_id=NULL,runtime='unknown' WHERE id=?", sessionId, hash(token), id);
+                interruptActivations(this.db, id);
                 // Role is durable. A rejoin is not an implicit grant or role upgrade.
                 role = existing.role;
                 this.run("UPDATE deliveries SET state='uncertain',error='Participant rebound during delivery' WHERE recipient_id=? AND state IN ('claimed','queued')", id);
@@ -153,6 +157,7 @@ export class TeamStore {
             const p = this.participant(id, room);
             if (p.token_hash !== hash(token) || p.session_id !== sessionId || !p.joined) fail("AUTH", "Participant credential or session binding is invalid; explicitly rejoin if needed.");
             if (this.connected(p)) fail("IN_USE", "Participant already has a live connection.");
+            interruptActivations(this.db, id);
             const generation = p.generation + 1;
             this.run("UPDATE deliveries SET state='uncertain',error='Connection replaced during delivery' WHERE recipient_id=? AND state IN ('claimed','queued')", id);
             this.run("UPDATE participants SET connection_id=?,generation=?,last_seen=?,runtime='unknown' WHERE id=?", connectionId, generation, this.now(), id);
@@ -163,6 +168,7 @@ export class TeamStore {
         this.transaction(() => {
             const p = this.participant(actor.participantId, actor.roomId);
             if (p.connection_id !== actor.connectionId || p.generation !== actor.generation) return;
+            interruptActivations(this.db, p.id);
             this.run("UPDATE participants SET connection_id=NULL,runtime='unknown' WHERE id=?", p.id);
             this.run("UPDATE deliveries SET state='uncertain',error='Connection closed during delivery' WHERE recipient_id=? AND state IN ('claimed','queued')", p.id);
         });
@@ -170,6 +176,7 @@ export class TeamStore {
     expire(): string[] {
         const rooms = this.all<{ room_id: string }>("SELECT DISTINCT room_id FROM participants WHERE connection_id IS NOT NULL AND last_seen<=?", this.now() - LEASE_MS);
         this.transaction(() => {
+            for (const p of this.all<{ id: string }>("SELECT id FROM participants WHERE connection_id IS NOT NULL AND last_seen<=?", this.now() - LEASE_MS)) interruptActivations(this.db, p.id);
             this.run("UPDATE deliveries SET state='uncertain',error='Lease expired during delivery' WHERE state IN ('claimed','queued') AND recipient_id IN (SELECT id FROM participants WHERE last_seen<=?)", this.now() - LEASE_MS);
             this.run("UPDATE participants SET connection_id=NULL,runtime='unknown' WHERE connection_id IS NOT NULL AND last_seen<=?", this.now() - LEASE_MS);
         });
@@ -204,11 +211,14 @@ export class TeamStore {
                     this.run("UPDATE deliveries SET acknowledged_at=COALESCE(acknowledged_at,?) WHERE id=?", this.now(), d.id);
                     return { acknowledged: true, taskComplete: false };
                 }
+                case "auto-reserve": case "auto-dispatch": case "auto-cancel": case "auto-finish":
+                    return this.automation().dispatch(this.worker(actor), op, params);
                 case "claim": return this.claim(this.worker(actor), room, params);
                 case "queue": case "receipt": case "reconcile": case "uncertain": return this.receipt(this.worker(actor), room, op, params);
                 case "leave": {
                     this.control(actor); fields(params, ["roomId", "participantId"]);
                     const p = this.participant(text(params, "participantId"), room);
+                    interruptActivations(this.db, p.id);
                     this.run("UPDATE participants SET joined=0,connection_id=NULL,runtime='unknown' WHERE id=?", p.id);
                     this.run("UPDATE deliveries SET state='uncertain',error='Participant left during delivery' WHERE recipient_id=? AND state IN ('claimed','queued')", p.id);
                     this.audit(room, "left", p.id); return { left: true };
@@ -217,7 +227,7 @@ export class TeamStore {
                     this.control(actor); fields(params, ["roomId", "participantId", "paused"]);
                     const paused = flag(params, "paused");
                     const id = text(params, "participantId", 200, true);
-                    if (id) { this.participant(id, room); this.run("UPDATE participants SET paused=? WHERE id=?", Number(paused), id); }
+                    if (id) { this.participant(id, room); this.run("UPDATE participants SET paused=?,pause_reason=? WHERE id=?", Number(paused), paused ? "Paused by user" : "", id); }
                     else this.run("UPDATE rooms SET paused=? WHERE id=?", Number(paused), room);
                     this.audit(room, paused ? "paused" : "resumed", id || room); return { paused };
                 }
@@ -225,7 +235,7 @@ export class TeamStore {
                     this.control(actor); fields(params, ["roomId", "participantId", "messageId"]);
                     const d = this.delivery(room, text(params, "messageId"), text(params, "participantId"));
                     if (d.state !== "uncertain") fail("STATE", "Only uncertain delivery can be explicitly retried.");
-                    this.run("UPDATE deliveries SET state='pending',attempt_id=NULL,entry_id=NULL,error=NULL WHERE id=?", d.id);
+                    this.run("UPDATE deliveries SET state='pending',activation_id=NULL,attempt_id=NULL,entry_id=NULL,error=NULL WHERE id=?", d.id);
                     this.audit(room, "delivery-retry", d.id); return { state: "pending" };
                 }
                 case "resolve": {
@@ -256,7 +266,7 @@ export class TeamStore {
         return {
             id: row.id, room_id: room, thread_id: row.thread_id, sequence: row.sequence,
             sender_id: row.sender_id, author_name: row.author_name, author_role: row.author_role,
-            author_kind: row.author_kind, type: row.type, body: row.body, reply_to: row.reply_to,
+            author_kind: row.author_kind, actionable: !!row.actionable, type: row.type, body: row.body, reply_to: row.reply_to,
             references: JSON.parse(row.references_json), created_at: row.created_at,
             subject: row.subject, thread_state: row.thread_state, deliveries,
         };
@@ -271,13 +281,15 @@ export class TeamStore {
         const recipients = [...new Set(strings(p, "recipients", 8, 100))].sort();
         const type = text(p, "type") as Message["type"];
         if (!MESSAGE_TYPES.includes(type)) fail("INVALID", "Invalid message type.");
+        const actionable = flag(p, "actionable");
+        if (actionable && type !== "handoff") fail("INVALID", "Only handoffs use actionable; other types have fixed wakeup policy.");
         const body = text(p, "body", MAX_BODY_BYTES);
         const references = strings(p, "references", 8, 1000, true);
         const subject = text(p, "subject", 200, true);
         let threadId = text(p, "threadId", 100, true);
         const replyTo = text(p, "replyTo", 100, true);
         if (type === "reply" && !replyTo) fail("INVALID", "Replies must name replyTo and its threadId.");
-        const digest = hash(JSON.stringify({ recipients, type, body, references, subject, threadId, replyTo, human }));
+        const digest = hash(JSON.stringify({ recipients, type, body, references, subject, threadId, replyTo, human, ...(actionable ? { actionable } : {}) }));
         const old = this.one<{ id: string; payload_hash: string }>("SELECT id,payload_hash FROM messages WHERE room_id=? AND sender_id=? AND idempotency_key=?", room, senderId, key);
         if (old) {
             if (old.payload_hash !== digest) fail("CONFLICT", "Idempotency key already used with a different payload.");
@@ -287,12 +299,14 @@ export class TeamStore {
         for (const id of recipients) this.participant(id, room); // Offline/left membership still has a durable mailbox.
         this.checkCapacity(room, recipients.length);
         if (threadId && this.thread(room, threadId).state !== "open") fail("CLOSED", "Thread is resolved; inspect its outcome instead of resuming stale work.");
+        let replyWakeRecipient = "";
         if (replyTo) {
             const original = this.message(room, replyTo);
             if (!threadId || original.thread_id !== threadId) fail("INVALID", "Reply must belong to the same room/thread.");
             if (!human && !original.deliveries.some((d) => d.recipient_id === senderId && d.state !== "cancelled" && !["redirected", "cancelled", "resolved"].includes(d.obligation))) {
                 fail("FORBIDDEN", "Only a current recipient may reply to this message; cancelled/reassigned requests cannot be resumed.");
             }
+            if (type === "reply" && original.deliveries.some((d) => d.obligation === "open" && (human || d.recipient_id === senderId))) replyWakeRecipient = original.sender_id;
             if (!recipients.includes(original.sender_id)) fail("INVALID", "Reply must address the original sender.");
         }
         if (!threadId) {
@@ -305,8 +319,12 @@ export class TeamStore {
         const id = randomUUID();
         this.run(`INSERT INTO messages(id,room_id,thread_id,sequence,sender_id,author_name,author_role,author_kind,type,body,reply_to,references_json,created_at,idempotency_key,payload_hash)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, room, threadId, sequence, senderId, human ? "User" : sender.name, human ? "human" : sender.role, human ? "human" : "peer", type, body, replyTo || null, JSON.stringify(references), this.now(), key, digest);
-        const obligation = ["question", "decision_request"].includes(type) ? "open" : "none";
-        for (const recipient of recipients) this.run("INSERT INTO deliveries(id,message_id,recipient_id,obligation) VALUES(?,?,?,?)", randomUUID(), id, recipient, obligation);
+        this.run("UPDATE messages SET actionable=? WHERE id=?", Number(actionable), id);
+        const obligation = ["question", "decision_request"].includes(type) || actionable ? "open" : "none";
+        for (const recipient of recipients) {
+            const wake = (human || recipient !== senderId) && (obligation === "open" || recipient === replyWakeRecipient);
+            this.run("INSERT INTO deliveries(id,message_id,recipient_id,obligation,wake_eligible) VALUES(?,?,?,?,?)", randomUUID(), id, recipient, obligation, Number(wake));
+        }
         if (replyTo && !human && type === "reply") this.run("UPDATE deliveries SET obligation='answered',state=CASE WHEN state='pending' THEN 'cancelled' ELSE state END WHERE message_id=? AND recipient_id=? AND obligation='open'", replyTo, senderId);
         this.audit(room, "message-stored", id);
         return this.message(room, id);
@@ -343,7 +361,7 @@ export class TeamStore {
                 FROM deliveries WHERE recipient_id=?`, p.id)!;
             return {
                 id: p.id, room_id: room, name: p.name, role: p.role, joined: p.joined, paused: p.paused,
-                runtime: this.connected(p) ? p.runtime : "unknown", last_seen: p.last_seen,
+                runtime: this.connected(p) ? p.runtime : "unknown", last_seen: p.last_seen, pause_reason: p.pause_reason,
                 summary: participantId ? p.summary : workPreview(p.summary), blocker: participantId ? p.blocker : workPreview(p.blocker),
                 workTruncated: !participantId && (workPreview(p.summary) !== p.summary || workPreview(p.blocker) !== p.blocker),
                 presence: this.presence(p), ...counts,
@@ -355,8 +373,11 @@ export class TeamStore {
                 AND (p.joined=0 OR p.connection_id IS NULL OR p.last_seen<=?)))`, room, this.now() - LEASE_MS)!.n;
         const questions = this.one<{ n: number }>("SELECT count(DISTINCT m.id) n FROM messages m JOIN deliveries d ON d.message_id=m.id WHERE m.room_id=? AND d.obligation='open'", room)!.n;
         const discussions = this.one<{ n: number }>("SELECT count(*) n FROM threads WHERE room_id=? AND state='open'", room)!.n;
-        return { room: this.room(room), you, participants, questions, discussions, attention, observedAt: this.now() };
+        const auto = this.automation();
+        const automation = { roomUsed: auto.roomUsed(room), roomLimit: ROOM_WAKE_LIMIT, threadLimit: THREAD_WAKE_LIMIT, blocked: auto.blocked(room) };
+        return { room: this.room(room), you, participants, questions, discussions, attention: attention + automation.blocked, observedAt: this.now(), automation };
     }
+    private automation(): AutomationStore { return new AutomationStore(this.db, this.now, (room, id) => this.message(room, id)); }
     private claim(actor: WorkerActor, room: string, p: Params): Message {
         fields(p, ["roomId", "messageId"]);
         const me = this.participant(actor.participantId, room);
@@ -419,7 +440,8 @@ export class TeamStore {
         if (this.one("SELECT id FROM deliveries WHERE message_id=? AND recipient_id=?", m.id, next.id)) fail("CONFLICT", "Target already has a delivery for this message.");
         this.checkCapacity(room, 1);
         this.run("UPDATE deliveries SET obligation='redirected',state=CASE WHEN state='recorded' THEN state ELSE 'cancelled' END WHERE id=?", d.id);
-        this.run("INSERT INTO deliveries(id,message_id,recipient_id,obligation) VALUES(?,?,?,?)", randomUUID(), m.id, next.id, d.obligation);
+        const wake = this.one<{ wake_eligible: number }>("SELECT wake_eligible FROM deliveries WHERE id=?", d.id)!.wake_eligible;
+        this.run("INSERT INTO deliveries(id,message_id,recipient_id,obligation,wake_eligible) VALUES(?,?,?,?,?)", randomUUID(), m.id, next.id, d.obligation, wake);
         this.audit(room, "redirected", d.id, { recipientId: next.id });
         return this.message(room, m.id);
     }

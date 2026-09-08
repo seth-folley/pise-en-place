@@ -1,5 +1,7 @@
 import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
+import { createSubagentWidget } from "../../extensions/orchestration/subagent/widget.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -104,14 +106,39 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         const saved = await client.call<Message>("read", { roomId: b.roomId, messageId: m.id }); expect(saved.deliveries[0].state).toBe("recorded");
         const factory = [...s.app.setWidget.mock.calls].reverse().find((args) => typeof args[1] === "function")![1];
         for (const color of ["dark", "light"]) {
-            const component = factory({}, { fg: (_key: string, text: string) => `\x1b[${color === "dark" ? 32 : 34}m${text}\x1b[0m` });
-            for (const width of [12, 40, 80]) {
-                const lines = component.render(width); expect(lines.length).toBeLessThanOrEqual(7);
+            const theme = {
+                fg: (_key: string, text: string) => `\x1b[${color === "dark" ? 32 : 34}m${text}\x1b[0m`,
+                bold: (text: string) => `\x1b[1m${text}\x1b[22m`,
+            };
+            const component = factory({}, theme);
+            for (const width of [0, 1, 3, 4, 12, 40, 80]) {
+                const lines = component.render(width); expect(lines.length).toBeLessThanOrEqual(8);
                 for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+                if (width >= 4) {
+                    const plain = lines.map(stripVTControlCharacters);
+                    expect(plain[0]).toMatch(/^╭─.*╮$/);
+                    expect(plain.at(-1)).toBe(`╰${"─".repeat(width - 2)}╯`);
+                    if (width >= 5) expect(plain.at(-1)).toBe(createSubagentWidget([])({}, theme).render(width).at(-1));
+                    for (const line of plain.slice(1, -1)) expect(line).toMatch(/^│ .* │$/);
+                    for (const line of lines) expect(visibleWidth(line)).toBe(width);
+                }
             }
         }
         // Membership entries and status never persist credentials.
         expect(JSON.stringify(s.app.entries)).not.toContain('"token"');
+    });
+    it("automatic delivery waits for all nested user prompts to close", async () => {
+        const s = await setup(); await s.app.command("join catalog --name app --role worker");
+        const b = await controlCall<Credential>(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
+        const client = await TeamClient.connect(s.paths.socket, { roomId: b.roomId, participantId: b.participantId, sessionId: b.sessionId, token: b.token }); cleanups.push(() => client.close());
+        const status = await client.call<Status>("status", { roomId: b.roomId });
+        await s.app.emit("ui_prompt_start"); await s.app.emit("ui_prompt_start");
+        await client.call("send", { roomId: b.roomId, idempotencyKey: "nested-ui", recipients: [status.participants.find((p) => p.name === "app")!.id], type: "question", subject: "UI", body: "Need input" });
+        await s.app.emit("ui_prompt_end");
+        await new Promise((r) => setTimeout(r, 300)); expect(s.app.sendMessage).not.toHaveBeenCalled();
+        await s.app.emit("ui_prompt_end");
+        await expect.poll(() => s.app.sendMessage.mock.calls.length).toBe(1);
+        expect(s.app.sendMessage.mock.calls[0][1]).toEqual({ deliverAs: "followUp", triggerTurn: true });
     });
     it("reload restores the same binding and session replacement never inherits enrollment", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");

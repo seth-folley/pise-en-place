@@ -81,6 +81,19 @@ A workspace may override the project identity and/or branch for newly recorded u
 
 Both `project.gitRemote` and `project.gitBranch` are optional. `gitRemote` is normalized and used as the normal project grouping key; the display name continues to be derived from it. Omitted values retain the Git-derived value. `tags` is an optional array of non-empty default tags. Defaults are combined with active session tags. The config affects only new ledger records and does not change the working directory or local Git metadata recorded with them.
 
+## OpenAI Codex subscription limits
+
+When Pi has an `openai-codex` OAuth login, the usage extension can fetch the account's current subscription limits on demand:
+
+```text
+/usage openai
+/usage openai --json
+```
+
+Each invocation makes a fresh request and displays every available rolling window, percentage used, time until reset, plan type, and any model-specific additional limits returned by OpenAI. There is no persistent widget, startup request, post-response polling, or result cache.
+
+The extension reuses Pi's managed OpenAI OAuth access token in memory and does not store or log credentials, raw responses, or limit readings. This integration calls OpenAI's undocumented `https://chatgpt.com/backend-api/wham/usage` endpoint, so schema or availability may change; failures are shown as unavailable rather than as zero usage.
+
 ## Commands
 
 Default month-to-date summary:
@@ -209,7 +222,7 @@ Machine-readable output:
 
 - Tracking starts only after the extension is enabled.
 - There is no rescan of older session files in v1.
-- Reports use Pi's provider-reported per-response usage/cost from the local ledger, not external provider billing APIs.
+- Ledger reports use Pi's provider-reported per-response usage/cost. `/usage openai` is the exception: it reads current subscription windows from OpenAI and does not add them to the ledger.
 - Summaries are derived from raw JSONL records on demand.
 - If the ledger becomes too large or concurrent writes become a problem, migrate to SQLite rather than adding rollups.
 - Corrupt JSONL lines are skipped and counted instead of crashing commands.

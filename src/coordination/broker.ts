@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { startupGate, recoverSocket } from "./startup.ts";
 import { TeamStore, secretMatches } from "./store.ts";
 import { preparePaths, privatePath, type TeamPaths } from "./paths.ts";
-import { encode, fail, fields, Frames, parseRequest, TeamError, text, type Actor } from "./protocol.ts";
+import { ACTIVATION_POLICY_VERSION, encode, fail, fields, Frames, parseRequest, SCHEMA_VERSION, TeamError, text, type Actor } from "./protocol.ts";
 
 export interface RunningBroker { store: TeamStore; stop(): Promise<void> }
 /** Bind before opening the DB: a competing broker cannot reset the live owner's leases. */
@@ -87,12 +87,12 @@ async function bindBroker(paths: TeamPaths, options: { now?: () => number; sweep
                                 changed((result as { roomId: string }).roomId);
                             } else {
                                 fields(req.params, []);
-                                result = { protocol: 1, schema: 1, status: req.op === "stop" ? "stopping" : "healthy" };
+                                result = { protocol: 1, schema: SCHEMA_VERSION, activationPolicy: ACTIVATION_POLICY_VERSION, status: req.op === "stop" ? "stopping" : "healthy" };
                                 if (req.op === "stop") setTimeout(() => { void stop(); }, 30);
                             }
                         } else {
                             result = store.dispatch(actor, req.op, req.params);
-                            if (!["status", "read", "heartbeat"].includes(req.op)) changed(text(req.params, "roomId"));
+                            if (!["status", "read", "heartbeat"].includes(req.op) && !(req.op === "auto-reserve" && result === null)) changed(text(req.params, "roomId"));
                             // Runtime presence changes are seen within the 5s client refresh cycle.
                         }
                         send(socket, { v: 1, id: req.id, ok: true, result });

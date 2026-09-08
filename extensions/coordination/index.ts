@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { truncateHead, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { AutomaticDelivery, PEER_BATCH_TYPE } from "../../src/coordination/automation.ts";
 import { ensureBroker } from "../../src/coordination/managed.ts";
 import { TeamClient, controlCall } from "../../src/coordination/client.ts";
 import { deliverOne, findPersistedEntry, PEER_MESSAGE_TYPE, reconcileDelivery, type DeliveryAdapter } from "../../src/coordination/delivery.ts";
@@ -13,7 +14,7 @@ import { HEARTBEAT_MS, MAX_BODY_BYTES, MESSAGE_TYPES, TeamError, safeText, type 
 const MEMBERSHIP = "team-binding-v1";
 const INSPECT = "team-inspect-v1";
 const WIDGET = "team-room-v1";
-const HELP = `Team coordination · manual delivery pilot
+const HELP = `Team coordination · automatic communication
 /team join <room> --name <name> --role <role> [--rejoin]
 /team leave                 Leave this room; keep history
 /team status                Roster, presence, requests, blockers
@@ -26,12 +27,14 @@ const HELP = `Team coordination · manual delivery pilot
 /team review <message>      Wait, human answer, cancel, or redirect
 /team resolve <thread>      Explicitly close a discussion
 /team pause [local|room]    Persist pause (default local)
-/team resume [local|room]   Resume without replay or model wakeup
+/team resume [local|room]   Resume eligible automatic delivery
 /team help
 
 One room per Pi session in this pilot; multiple isolated rooms can run concurrently.
 Joining starts/reuses the broker automatically; it exits after 60s with no connections.
-No automatic wakeups, moderator, or approved-decision tooling yet.`;
+Automatic idle-boundary wakeups: questions, decision requests, requested replies, actionable handoffs.
+Limits: no thread cap; 100 activations/room/rolling hour. Abort pauses local automation.
+No moderator or approved-decision tooling.`;
 
 function bounded(value: string): string {
     const truncated = truncateHead(safeText(value), { maxBytes: 40 * 1024, maxLines: 1800 });
@@ -52,8 +55,10 @@ export default function coordination(pi: ExtensionAPI) {
     let transportAbort = new AbortController();
     let retryAt = 0, reconnectDelay = 1000;
     let runtime: Runtime = "unknown";
+    let uiPrompts = 0;
     let locallyPaused = false;
     let deliveryBusy = false;
+    let automatic: AutomaticDelivery | undefined;
     let lastError = "";
 
     function current(context: ExtensionContext): boolean { return !!ctx && ctx.sessionManager.getSessionId() === context.sessionManager.getSessionId(); }
@@ -67,7 +72,18 @@ export default function coordination(pi: ExtensionAPI) {
             invalidate() {},
             render(width) {
                 const lines = widgetLines(status, !client, binding?.roomName ?? "detached");
-                return lines.map((line, i) => truncateToWidth(theme.fg(i === 0 ? "accent" : /disconnected|STALE|PAUSED|unknown/.test(line) ? "warning" : "muted", line), width));
+                if (width < 4) return lines.map((line) => truncateToWidth(line, Math.max(0, width)));
+                // Match the local subagent activity tray: rounded frame, inset bold title,
+                // one-cell row padding, and full-width bottom border.
+                const innerWidth = width - 4;
+                const title = truncateToWidth(` ${lines[0]} `, width - 3);
+                const top = `╭─${theme.fg("accent", theme.bold(title))}${theme.fg("muted", "─".repeat(width - 3 - visibleWidth(title)))}╮`;
+                const rows = lines.slice(1).map((line) => {
+                    const color = /disconnected|STALE|PAUSED|unknown/.test(line) ? "warning" : "muted";
+                    const text = truncateToWidth(theme.fg(color, line.replace(/^  /, "")), innerWidth);
+                    return `│ ${text}${" ".repeat(Math.max(0, innerWidth - visibleWidth(text)))} │`;
+                });
+                return [top, ...rows, `╰${"─".repeat(width - 2)}╯`];
             },
         }));
     }
@@ -80,7 +96,7 @@ export default function coordination(pi: ExtensionAPI) {
             if (!next?.room || !Array.isArray(next.participants)) throw new Error("Malformed team status response.");
             if (e !== epoch || c !== client) return;
             status = next; locallyPaused = !!next.participants.find((p) => p.id === b.participantId)?.paused;
-            lastError = ""; widget();
+            lastError = ""; widget(); automatic?.kick();
         } catch (error) {
             if (e === epoch && c === client) { lastError = errorText(error); client = undefined; await c.close(); widget(); }
         } finally { if (e === epoch) refreshing = false; }
@@ -114,6 +130,17 @@ export default function coordination(pi: ExtensionAPI) {
         } finally { if (e === epoch) connecting = false; }
     }
     function startTimer(): void {
+        if (!automatic && binding) {
+            const b = binding, e = epoch;
+            automatic = new AutomaticDelivery({
+                binding: b, transport: () => e === epoch ? client : undefined,
+                ready: () => e === epoch && !!ctx && !!client && ctx.isIdle() && runtime === "idle" && uiPrompts === 0 && !ctx.hasPendingMessages?.() && !deliveryBusy && !locallyPaused && !status?.room.paused,
+                insert(content, details) { pi.sendMessage({ customType: PEER_BATCH_TYPE, content, details, display: true }, { deliverAs: "followUp", triggerTurn: true }); },
+                persistedEntry: (id) => findPersistedEntry(e === epoch ? ctx?.sessionManager.getSessionFile() : undefined, b, id),
+                notify: (message) => { if (e === epoch) ctx?.ui.notify(message, "warning"); },
+                changed: () => { if (e === epoch) void refresh(); },
+            });
+        }
         if (timer) return;
         timer = setInterval(() => {
             if (!client) { void connectWorker(); return; }
@@ -154,6 +181,8 @@ export default function coordination(pi: ExtensionAPI) {
     });
     pi.registerMessageRenderer(PEER_MESSAGE_TYPE, (message, _options, theme) => new Text(theme.fg("customMessageText", safeText(typeof message.content === "string" ? message.content : "Team peer message")), 0, 0));
 
+    pi.registerMessageRenderer(PEER_BATCH_TYPE, (message, _options, theme) => new Text(theme.fg("customMessageText", safeText(typeof message.content === "string" ? message.content : "Automatic team inbox")), 0, 0));
+
     pi.on("session_start", async (event, context) => {
         ctx = context; runtime = context.isIdle() ? "idle" : "working";
         // No sockets/timers in the factory, and no automatic enrollment on startup/new/resume/fork/clone.
@@ -177,18 +206,20 @@ export default function coordination(pi: ExtensionAPI) {
         }
     });
     pi.on("session_shutdown", async () => {
+        automatic?.dispose(); automatic = undefined;
         epoch++; transportAbort.abort();
         if (timer) clearInterval(timer); timer = undefined;
         const c = client;
         ctx?.ui.setWidget(WIDGET, undefined);
-        ctx = undefined; client = undefined; credential = undefined; binding = undefined; status = undefined;
+        ctx = undefined; client = undefined; credential = undefined; binding = undefined; status = undefined; uiPrompts = 0;
         connecting = false; refreshing = false;
         await c?.close();
     });
-    pi.on("agent_start", (_event, context) => { if (current(context)) { ctx = context; runtime = "working"; } });
-    pi.on("agent_settled", (_event, context) => { if (current(context)) { ctx = context; runtime = context.isIdle() ? "idle" : "working"; } });
-    pi.on("ui_prompt_start", () => { runtime = "waiting-for-user"; });
-    pi.on("ui_prompt_end", (_event, context) => { if (current(context)) runtime = context.isIdle() ? "idle" : "working"; });
+    pi.on("agent_start", (_event, context) => { if (current(context)) { ctx = context; runtime = "working"; automatic?.agentStarted(context.signal); } });
+    pi.on("agent_end", (event, context) => { if (current(context)) automatic?.agentEnded(event.messages); });
+    pi.on("agent_settled", async (_event, context) => { if (current(context)) { ctx = context; runtime = uiPrompts ? "waiting-for-user" : context.isIdle() ? "idle" : "working"; await automatic?.settled(); } });
+    pi.on("ui_prompt_start", (_event, context) => { if (current(context)) { uiPrompts++; runtime = "waiting-for-user"; } });
+    pi.on("ui_prompt_end", (_event, context) => { if (current(context)) { uiPrompts = Math.max(0, uiPrompts - 1); runtime = uiPrompts ? "waiting-for-user" : context.isIdle() ? "idle" : "working"; automatic?.kick(); } });
 
     pi.registerTool({
         name: "team_status", label: "Team status",
@@ -203,10 +234,11 @@ export default function coordination(pi: ExtensionAPI) {
     });
     pi.registerTool({
         name: "team_send", label: "Team send",
-        description: "Send an explicit, attributable message within your joined team. Success means durable storage, NOT recipient delivery or reply. Use participant IDs from team_status and a unique idempotencyKey per logical message; retry unknown sends only with the same key/payload. Ask once, then continue independent assigned work or report a blocker. No polling, courtesy reply loops, broadcasts, user approval, or delegated work outside existing authorization. Bodies max 16 KiB UTF-8; references are not fetched.",
+        description: "Send an explicit, attributable message within your joined team. Success means durable storage, NOT recipient delivery or reply. Use participant IDs from team_status and a unique idempotencyKey per logical message; retry unknown sends only with the same key/payload. Ask once, then continue independent assigned work or report a blocker. No polling, courtesy reply loops, broadcasts, user approval, or delegated work outside existing authorization. Questions, decision requests, first replies to outstanding requests and actionable handoffs can wake idle peers within durable budgets. Status, courtesy replies and informational messages never wake peers. Bodies max 16 KiB UTF-8; references are not fetched.",
         parameters: Type.Object({
             roomId: Type.String(), idempotencyKey: Type.String({ minLength: 1, maxLength: 100 }),
             recipients: Type.Array(Type.String(), { minItems: 1, maxItems: 8 }), type: StringEnum(MESSAGE_TYPES),
+            actionable: Type.Optional(Type.Boolean({ description: "Handoffs only: request continuation of an existing authorized assignment and allow an automatic wakeup. Not new scope or permission." })),
             body: Type.String({ minLength: 1, maxLength: MAX_BODY_BYTES }), subject: Type.Optional(Type.String({ maxLength: 200 })),
             threadId: Type.Optional(Type.String()), replyTo: Type.Optional(Type.String()), references: Type.Optional(Type.Array(Type.String({ maxLength: 1000 }), { maxItems: 8 })),
         }, { additionalProperties: false }),
@@ -234,7 +266,7 @@ export default function coordination(pi: ExtensionAPI) {
     });
 
     pi.registerCommand("team", {
-        description: "Join an isolated team room, inspect status/inbox, manually deliver or review messages",
+        description: "Join an isolated team room with automatic peer communication; inspect, pause, or review messages",
         handler: async (args, commandCtx) => {
             const [op = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
             try {
@@ -250,7 +282,7 @@ export default function coordination(pi: ExtensionAPI) {
                         else throw new Error("Unknown join option. " + HELP.split("\n")[1]);
                     }
                     if (!room || !name || !role) throw new Error(HELP.split("\n")[1]);
-                    if (!await confirm(commandCtx, `${rejoin ? "Rejoin" : "Join"} team ${room} as ${name}?`, "Share only explicit messages/status with this room. Delivered content goes to peers' model providers. No automatic wakeups. Rejoin recovers this name's existing mailbox and can rebind a disconnected prior session; no live takeover.")) return;
+                    if (!await confirm(commandCtx, `${rejoin ? "Rejoin" : "Join"} team ${room} as ${name}?`, "Share only explicit messages/status with this room. Delivered content goes to peers' model providers. Eligible messages automatically wake this session when idle (no thread cap, 100 activations/room/hour); model usage may incur costs. Busy work is not interrupted; abort pauses local automation. Rejoin recovers this name's existing mailbox and can rebind a disconnected prior session; no live takeover.")) return;
                     const e = epoch;
                     const joinEpoch = epoch;
                     await ensureBroker(teamPaths());
@@ -261,7 +293,7 @@ export default function coordination(pi: ExtensionAPI) {
                     const { token: _token, ...publicBinding } = joined; binding = publicBinding;
                     pi.appendEntry(MEMBERSHIP, { binding });
                     retryAt = 0; startTimer(); await connectWorker();
-                    inspect(`Joined ${room} as ${binding.name}. Room ID ${binding.roomId}\n${client ? "Connected. Pending inbox is visible; no model run started." : lastError}\n/team status · /team inbox · /team help`);
+                    inspect(`Joined ${room} as ${binding.name}. Room ID ${binding.roomId}\n${client ? "Connected. Eligible inbox messages will be processed automatically at idle boundaries." : lastError}\n/team status · /team inbox · /team help`);
                     return;
                 }
                 if (!client && binding && op === "status") {
@@ -271,6 +303,7 @@ export default function coordination(pi: ExtensionAPI) {
                 }
                 if (!client && binding && op === "leave") {
                     if (!await confirm(commandCtx, `Detach from ${binding.roomName} while offline?`, "Stop reconnecting this session. The broker cannot record an explicit departure while unavailable; its membership/history remain for explicit rejoin.")) return;
+                    automatic?.dispose(); automatic = undefined;
                     epoch++; transportAbort.abort(); transportAbort = new AbortController();
                     credential = undefined; binding = undefined; status = undefined; connecting = false; refreshing = false;
                     if (timer) clearInterval(timer); timer = undefined;
@@ -303,9 +336,9 @@ export default function coordination(pi: ExtensionAPI) {
                             const d = m.deliveries.find((d) => d.recipient_id === c.binding.participantId);
                             if (!d) throw new Error("This message is not addressed to you.");
                             if (await reconcileDelivery(c.client, a, d)) inspect("Persisted entry reconciled. No duplicate insertion or model run.");
-                            else if (op === "retry" && await confirm(commandCtx, "Retry uncertain delivery?", "No matching persisted entry was found for this session. Prior execution cannot be ruled out. Retry may duplicate work; nothing will run automatically.")) {
+                            else if (op === "retry" && await confirm(commandCtx, "Retry uncertain delivery?", "No matching persisted entry was found for this session. Prior execution cannot be ruled out. Retry may duplicate work. If unpaused and within budget, an eligible message can run automatically.")) {
                                 await controlCall(teamPaths(), "retry", { ...scope, participantId: c.binding.participantId, messageId: id });
-                                inspect(`Delivery reset to pending by explicit human action. Use /team deliver ${id} when ready.`);
+                                inspect(`Delivery reset to pending by explicit human action. Eligible messages can now run automatically if unpaused and within budget.`);
                             } else inspect("No matching persisted receipt found. Outcome remains uncertain; no message replayed.");
                         }
                     } finally { deliveryBusy = false; }
@@ -314,14 +347,16 @@ export default function coordination(pi: ExtensionAPI) {
                 if (op === "pause" || op === "resume") {
                     const scopeName = rest[0] ?? "local";
                     if (!["local", "room", "project"].includes(scopeName)) throw new Error("Use local or room pause scope.");
-                    if (!await confirm(commandCtx, `${op} ${scopeName} delivery?`, `Team ${c.binding.roomName}. Does not abort current work, undo dispatched operations, or replay messages.`)) return;
+                    if (!await confirm(commandCtx, `${op} ${scopeName} delivery?`, `Team ${c.binding.roomName}. Does not abort current work or undo dispatched operations. Resume can wake still-eligible pending messages; it does not replay recorded history or reset budgets.`)) return;
                     if (scopeName === "local") locallyPaused = op === "pause";
                     await controlCall(teamPaths(), "pause", { ...scope, ...(scopeName === "local" ? { participantId: c.binding.participantId } : {}), paused: op === "pause" });
+                    if (op === "resume" && scopeName === "local") automatic?.resume();
                     await refresh(); return;
                 }
                 if (op === "leave") {
                     if (!await confirm(commandCtx, `Leave ${c.binding.roomName}?`, "Stop delivery to this session. Keep all history and pending messages for explicit rejoin.")) return;
                     await controlCall(teamPaths(), "leave", { ...scope, participantId: c.binding.participantId });
+                    automatic?.dispose(); automatic = undefined;
                     epoch++; transportAbort.abort(); transportAbort = new AbortController();
                     credential = undefined; binding = undefined; client = undefined; status = undefined; connecting = false; refreshing = false;
                     if (timer) clearInterval(timer); timer = undefined;
@@ -354,7 +389,7 @@ export default function coordination(pi: ExtensionAPI) {
                         params.recipientId = target.id; operation = "redirect";
                     }
                     if (!await confirm(commandCtx, `${action}?`, `Team ${c.binding.roomName} · Message ${m.id} · recipient ${d.recipientName}. Changes are durable and cannot retract content already delivered.`)) return;
-                    await controlCall(teamPaths(), operation, params); inspect(`Human action recorded: ${action}. No model run triggered.`); await refresh(); return;
+                    await controlCall(teamPaths(), operation, params); inspect(`Human action recorded: ${action}. Eligible recipients may process this update automatically at idle boundaries.`); await refresh(); return;
                 }
                 throw new Error(HELP);
             } catch (error) {

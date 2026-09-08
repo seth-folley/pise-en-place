@@ -1,5 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
+import { createServer, type Socket } from "node:net";
+import { Frames, encode } from "../../src/coordination/protocol.ts";
 import { mkdtemp, rm, lstat, mkdir, writeFile, readFile, unlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
@@ -7,7 +9,7 @@ import { afterEach, expect, it } from "vitest";
 import { ensureBroker } from "../../src/coordination/managed.ts";
 import { startBroker } from "../../src/coordination/broker.ts";
 import { controlCall, TeamClient } from "../../src/coordination/client.ts";
-import { teamPaths } from "../../src/coordination/paths.ts";
+import { preparePaths, teamPaths } from "../../src/coordination/paths.ts";
 import type { Credential, Status } from "../../src/coordination/protocol.ts";
 const exec = promisify(execFile);
 const cleanup: (() => Promise<unknown>)[] = [];
@@ -22,6 +24,32 @@ async function setup() {
     });
     return { root, paths };
 }
+it.each([1, 2, 99])("upgrades known schema/policy brokers but preserves unknown versions (%i)", async (schema) => {
+    const { paths } = await setup();
+    const key = await preparePaths(paths); let stops = 0;
+    const sockets = new Set<Socket>();
+    const server = createServer((socket) => {
+        sockets.add(socket); socket.on("error", () => {}); socket.on("close", () => sockets.delete(socket));
+        const frames = new Frames();
+        socket.on("data", (bytes) => {
+            for (const value of frames.push(Buffer.from(bytes))) {
+                const req = value as { id: string; op: string };
+                socket.write(encode({ v: 1, id: req.id, ok: true, result: { protocol: 1, schema, status: req.op === "stop" ? "stopping" : "healthy" } }));
+                if (req.op === "stop") { stops++; setTimeout(() => { server.close(); for (const s of sockets) s.destroy(); }, 30); }
+            }
+        });
+    });
+    await new Promise<void>((resolve) => server.listen(paths.socket, resolve));
+    cleanup.push(async () => { if (server.listening) { for (const s of sockets) s.destroy(); await new Promise<void>((r) => server.close(() => r())); } });
+    if (schema === 1 || schema === 2) {
+        await ensureBroker(paths); expect(stops).toBe(1);
+        expect(await controlCall(paths, "health", {})).toMatchObject({ schema: 2, activationPolicy: 2 });
+        expect((await readFile(paths.control, "utf8")).trim()).toBe(key);
+    } else {
+        await expect(ensureBroker(paths)).rejects.toThrow(/Unsupported broker schema/);
+        expect(stops).toBe(0); expect(server.listening).toBe(true);
+    }
+}, 20_000);
 it("cold-starts once across independent callers, reuses live identity, and needs no npm process", async () => {
     const { root, paths } = await setup();
     const script = `const {ensureBroker}=require(${JSON.stringify(resolve("src/coordination/managed.ts"))});const {teamPaths}=require(${JSON.stringify(resolve("src/coordination/paths.ts"))});ensureBroker(teamPaths()).catch(e=>{console.error(e);process.exitCode=1});`;

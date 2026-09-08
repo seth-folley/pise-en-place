@@ -22,6 +22,8 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 
 ## What's included
 
+See the complete command reference in [HTML](docs/commands.html) or its agent-friendly [Markdown source](docs/commands.md) for syntax, behavior, persistence, prerequisites, and side effects of every slash command provided by this package.
+
 ### Safety
 
 - `extensions/safety/index.ts` detects risky bash, edit, and write operations.
@@ -39,6 +41,7 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
 
 - `extensions/usage/index.ts` records assistant-response token usage and estimated cost in a private JSONL ledger.
 - `/usage` reports by range, project, branch, model, provider, and skill usage, with JSON and visual report options.
+- `/usage openai` fetches the current OpenAI Codex subscription windows on demand without a persistent widget or background polling.
 - `extensions/skills/read-ledger.ts` tracks explicit skill command usage and skill-file reads without storing prompts or skill contents.
 - See `docs/usage-tracking.md` and `docs/skill-read-tracking.md`.
 
@@ -85,12 +88,13 @@ After changing extension code in an active Pi session, run Pi's `/reload` comman
   }
   ```
 
-### Agent coordination (manual messaging pilot)
+### Agent coordination (autonomous communication)
 
 - `extensions/coordination/index.ts` adds `/team`, `team_status`, `team_send`, `team_read`, and a persistent team widget.
 - An automatically managed local Unix-socket broker owns SQLite-backed rooms, messages, inboxes, presence, and delivery recovery. Multiple isolated teams can run concurrently; the pilot joins one room per Pi session.
 - Reload Pi, then `/team join <room> --name <name> --role worker`. Joining starts/reuses the broker automatically; it shuts down after 60 seconds without connections. No normal setup/teardown commands.
-- Manual delivery only: no automatic model wakeups, spawning, or moderator/decision approval tools yet. Requires Node 24.15+ and Pi 0.85.1+ on macOS/Linux.
+- Eligible messages automatically wake idle recipients or wait for busy agents to settle. Questions, requested replies, decision requests, and actionable handoffs are eligible; informational traffic never wakes agents.
+- Durable limits: 100 activations/room/rolling hour with no lifetime thread cap, with batching, pause-on-abort, and conservative uncertain-delivery recovery. No spawning or moderator/decision approval tools. Requires Node 24.15+ and Pi 0.85.1+ on macOS/Linux.
 - See [setup, commands, privacy, recovery, and live smoke test](docs/agent-coordination.md) and [protocol v1](docs/agent-coordination-protocol.md).
 
 ### Productivity helpers
@@ -119,7 +123,7 @@ extensions/
   skills/          skill read tracking and skill update flows
   ui/              status line, response timing, ask_user UI tool
   productivity/    PR lookup, context filtering, local sharing, session helpers, todos, roadmap writer
-  coordination/    explicit team enrollment, manual messaging, inbox/status widget
+  coordination/    explicit team enrollment, automatic messaging, inbox/status widget
 src/coordination/  local SQLite broker, socket protocol/client, delivery adapter
 src/shared/        shared implementation helpers used by extensions
 skills/            agent workflows shipped by this package

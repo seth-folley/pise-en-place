@@ -22,7 +22,7 @@ async function main() {
             notifyParent({ ready: true }); return;
         }
         if (managed) notifyParent({ ready: true });
-        else console.log(`Coordination broker ready (protocol/schema 1)\nSocket: ${paths.socket}\nDatabase: ${paths.database}\nNo model calls; Ctrl+C stops the broker and preserves history.`);
+        else console.log(`Coordination broker ready (protocol 1 / schema 2)\nSocket: ${paths.socket}\nDatabase: ${paths.database}\nNo model calls; Ctrl+C stops the broker and preserves history.`);
         const stop = () => { void broker.stop().catch((e) => { console.error(e.message); process.exitCode = 1; }); };
         process.once("SIGINT", stop); process.once("SIGTERM", stop);
         return;
