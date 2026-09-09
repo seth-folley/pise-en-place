@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { truncateHead, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { AutomaticDelivery, PEER_BATCH_TYPE } from "../../src/coordination/automation.ts";
 import { ensureBroker } from "../../src/coordination/managed.ts";
@@ -11,6 +10,7 @@ import { teamPaths } from "../../src/coordination/paths.ts";
 import { messageText, pageText, statusText, widgetLines } from "../../src/coordination/presentation.ts";
 import { HEARTBEAT_MS, MAX_BODY_BYTES, MESSAGE_TYPES, TeamError, safeText, type Binding, type Credential, type Message, type Page, type Params, type Runtime, type Status } from "../../src/coordination/protocol.ts";
 import { INSPECT_ENTRY_TYPE as INSPECT, MEMBERSHIP_ENTRY_TYPE as MEMBERSHIP, TEAM_HELP as HELP, WIDGET_ID as WIDGET } from "./constants.ts";
+import { registerCoordinationRenderers, renderWidget } from "./rendering.ts";
 
 function bounded(value: string): string {
     const truncated = truncateHead(safeText(value), { maxBytes: 40 * 1024, maxLines: 1800 });
@@ -38,31 +38,7 @@ export default function coordination(pi: ExtensionAPI) {
     let lastError = "";
 
     function current(context: ExtensionContext): boolean { return !!ctx && ctx.sessionManager.getSessionId() === context.sessionManager.getSessionId(); }
-    function widget(): void {
-        if (!ctx?.hasUI) return;
-        if (!binding) { ctx.ui.setWidget(WIDGET, undefined); return; }
-        if (ctx.mode !== "tui") {
-            ctx.ui.setWidget(WIDGET, widgetLines(status, !client, binding.roomName)); return;
-        }
-        ctx.ui.setWidget(WIDGET, (_tui, theme) => ({
-            invalidate() {},
-            render(width) {
-                const lines = widgetLines(status, !client, binding?.roomName ?? "detached");
-                if (width < 4) return lines.map((line) => truncateToWidth(line, Math.max(0, width)));
-                // Match the local subagent activity tray: rounded frame, inset bold title,
-                // one-cell row padding, and full-width bottom border.
-                const innerWidth = width - 4;
-                const title = truncateToWidth(` ${lines[0]} `, width - 3);
-                const top = `╭─${theme.fg("accent", theme.bold(title))}${theme.fg("muted", "─".repeat(width - 3 - visibleWidth(title)))}╮`;
-                const rows = lines.slice(1).map((line) => {
-                    const color = /disconnected|STALE|PAUSED|unknown/.test(line) ? "warning" : "muted";
-                    const text = truncateToWidth(theme.fg(color, line.replace(/^  /, "")), innerWidth);
-                    return `│ ${text}${" ".repeat(Math.max(0, innerWidth - visibleWidth(text)))} │`;
-                });
-                return [top, ...rows, `╰${"─".repeat(width - 2)}╯`];
-            },
-        }));
-    }
+    function widget(): void { renderWidget(ctx, binding, status, !!client); }
     async function refresh(): Promise<void> {
         const c = client, b = binding, e = epoch;
         if (!c || !b || refreshing) return;
@@ -151,13 +127,7 @@ export default function coordination(pi: ExtensionAPI) {
         };
     }
 
-    pi.registerEntryRenderer(INSPECT, (entry, _options, _theme) => {
-        const data = entry.data as { text?: string } | undefined;
-        return new Text(safeText(data?.text ?? "Team inspection unavailable"), 0, 0);
-    });
-    pi.registerMessageRenderer(PEER_MESSAGE_TYPE, (message, _options, theme) => new Text(theme.fg("customMessageText", safeText(typeof message.content === "string" ? message.content : "Team peer message")), 0, 0));
-
-    pi.registerMessageRenderer(PEER_BATCH_TYPE, (message, _options, theme) => new Text(theme.fg("customMessageText", safeText(typeof message.content === "string" ? message.content : "Automatic team inbox")), 0, 0));
+    registerCoordinationRenderers(pi);
 
     pi.on("session_start", async (event, context) => {
         ctx = context; runtime = context.isIdle() ? "idle" : "working";
