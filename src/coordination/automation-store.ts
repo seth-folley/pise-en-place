@@ -31,7 +31,7 @@ export class AutomationStore {
         return !!this.one<{ paused: number }>("SELECT (p.paused OR r.paused) paused FROM participants p JOIN rooms r ON r.id=p.room_id WHERE p.id=?", actor.participantId)!.paused;
     }
     dispatch(actor: WorkerActor, op: string, p: Params): unknown {
-        fields(p, op === "auto-reserve" ? ["roomId"] : op === "auto-finish" ? ["roomId", "activationId", "outcome", "entries"] : ["roomId", "activationId"]);
+        fields(p, op === "auto-reserve" ? ["roomId"] : op === "auto-finish" ? ["roomId", "activationId", "outcome", "entries"] : op === "auto-reconcile" ? ["roomId", "activationId", "entries"] : ["roomId", "activationId"]);
         if (op === "auto-reserve") {
             if (this.paused(actor) || this.roomUsed(actor.roomId) >= ROOM_WAKE_LIMIT) return null;
             if (this.one("SELECT id FROM activations WHERE participant_id=? AND state IN ('reserved','dispatched')", actor.participantId)) return null;
@@ -65,6 +65,20 @@ export class AutomationStore {
             this.run("UPDATE activations SET state='dispatched' WHERE id=?", id);
             this.run("UPDATE deliveries SET state='queued' WHERE activation_id=?", id);
             return { state: "dispatched" };
+        }
+        if (op === "auto-reconcile") {
+            if (a.state !== "reserved") fail("STATE", "Only an undispatched activation can be reconciled.");
+            if (!Array.isArray(p.entries) || p.entries.length > MAX_AUTO_BATCH) fail("INVALID", "Invalid recording evidence.");
+            for (const value of p.entries) {
+                if (!value || typeof value !== "object" || Array.isArray(value)) fail("INVALID", "Invalid recording evidence.");
+                const entry = value as Params; fields(entry, ["messageId", "entryId"]);
+                const messageId = text(entry, "messageId", 100), entryId = text(entry, "entryId", 100);
+                const delivery = this.one<{ id: string }>("SELECT id FROM deliveries WHERE activation_id=? AND message_id=? AND state='claimed'", id, messageId);
+                if (!delivery) fail("NOT_FOUND", "Recording evidence does not belong to this reserved activation.");
+                this.run("UPDATE deliveries SET state='recorded',entry_id=?,error=NULL WHERE id=?", entryId, delivery.id);
+            }
+            // No Pi insertion occurred. Refund this activation and release unproven claims for a fresh reservation.
+            this.cancel(a); return { state: "cancelled" };
         }
         if (op === "auto-finish") {
             const outcome = text(p, "outcome", 20);

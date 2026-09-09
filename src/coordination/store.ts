@@ -211,7 +211,7 @@ export class TeamStore {
                     this.run("UPDATE deliveries SET acknowledged_at=COALESCE(acknowledged_at,?) WHERE id=?", this.now(), d.id);
                     return { acknowledged: true, taskComplete: false };
                 }
-                case "auto-reserve": case "auto-dispatch": case "auto-cancel": case "auto-finish":
+                case "auto-reserve": case "auto-dispatch": case "auto-cancel": case "auto-finish": case "auto-reconcile":
                     return this.automation().dispatch(this.worker(actor), op, params);
                 case "claim": return this.claim(this.worker(actor), room, params);
                 case "queue": case "receipt": case "reconcile": case "uncertain": return this.receipt(this.worker(actor), room, op, params);
@@ -368,14 +368,16 @@ export class TeamStore {
             };
         });
         const attention = this.one<{ n: number }>(`SELECT count(*) n FROM deliveries d
-            JOIN messages m ON m.id=d.message_id JOIN participants p ON p.id=d.recipient_id
+            JOIN messages m ON m.id=d.message_id JOIN participants p ON p.id=d.recipient_id JOIN threads t ON t.id=m.thread_id
             WHERE m.room_id=? AND (d.state='uncertain' OR ((d.state='pending' OR d.obligation='open')
-                AND (p.joined=0 OR p.connection_id IS NULL OR p.last_seen<=?)))`, room, this.now() - LEASE_MS)!.n;
+                AND (p.joined=0 OR p.connection_id IS NULL OR p.last_seen<=?)) OR
+                (?=1 AND d.state='pending' AND d.activation_id IS NULL AND d.wake_eligible=1 AND d.obligation IN ('open','none') AND t.state='open'))`,
+            room, this.now() - LEASE_MS, this.automation().roomUsed(room) >= ROOM_WAKE_LIMIT ? 1 : 0)!.n;
         const questions = this.one<{ n: number }>("SELECT count(DISTINCT m.id) n FROM messages m JOIN deliveries d ON d.message_id=m.id WHERE m.room_id=? AND d.obligation='open'", room)!.n;
         const discussions = this.one<{ n: number }>("SELECT count(*) n FROM threads WHERE room_id=? AND state='open'", room)!.n;
         const auto = this.automation();
         const automation = { roomUsed: auto.roomUsed(room), roomLimit: ROOM_WAKE_LIMIT, threadLimit: THREAD_WAKE_LIMIT, blocked: auto.blocked(room) };
-        return { room: this.room(room), you, participants, questions, discussions, attention: attention + automation.blocked, observedAt: this.now(), automation };
+        return { room: this.room(room), you, participants, questions, discussions, attention, observedAt: this.now(), automation };
     }
     private automation(): AutomationStore { return new AutomationStore(this.db, this.now, (room, id) => this.message(room, id)); }
     private claim(actor: WorkerActor, room: string, p: Params): Message {

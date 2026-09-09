@@ -40,10 +40,16 @@ export class AutomaticDelivery {
             batch = await transport.call<Activation | null>("auto-reserve", { roomId: this.host.binding.roomId });
             if (!batch) return;
             if (!this.ready()) { await this.cancel(transport, batch); return; }
-            // Explicit retry may encounter a previously persisted logical message. Do not re-wake it.
-            for (const message of batch.messages) if (await this.host.persistedEntry(message.id)) {
-                this.active = { batch, submitted: false, started: false, outcome: "unknown" };
-                await this.finish("unknown"); return;
+            // Explicit retry may encounter persisted logical messages. Reconcile them atomically,
+            // refund this never-dispatched activation, then reserve only remaining eligible work.
+            const entries: { messageId: string; entryId: string }[] = [];
+            for (const message of batch.messages) {
+                const entryId = await this.host.persistedEntry(message.id);
+                if (entryId) entries.push({ messageId: message.id, entryId });
+            }
+            if (entries.length) {
+                await transport.call("auto-reconcile", { roomId: this.host.binding.roomId, activationId: batch.id, entries });
+                return;
             }
             if (!this.ready()) { await this.cancel(transport, batch); return; }
             const permit = await transport.call<{ state: string }>("auto-dispatch", { roomId: this.host.binding.roomId, activationId: batch.id });
@@ -71,7 +77,7 @@ export class AutomaticDelivery {
             if (this.active?.submitted) await this.finish("unknown");
             else if (batch) await this.cancel(transport, batch).catch(() => {});
             if (!this.disposed) this.host.notify(`Automatic team delivery could not proceed: ${e instanceof Error ? e.message : String(e)}`);
-        } finally { this.busy = false; if (batch && !this.disposed) this.host.changed(); }
+        } finally { this.busy = false; if (batch && !this.disposed) { this.host.changed(); this.kick(); } }
     }
     private cancel(transport: DeliveryTransport, batch: Activation) {
         return transport.call("auto-cancel", { roomId: this.host.binding.roomId, activationId: batch.id });

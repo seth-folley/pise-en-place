@@ -43,7 +43,7 @@ it.each([1, 2, 99])("upgrades known schema/policy brokers but preserves unknown 
     cleanup.push(async () => { if (server.listening) { for (const s of sockets) s.destroy(); await new Promise<void>((r) => server.close(() => r())); } });
     if (schema === 1 || schema === 2) {
         await ensureBroker(paths); expect(stops).toBe(1);
-        expect(await controlCall(paths, "health", {})).toMatchObject({ schema: 2, activationPolicy: 2 });
+        expect(await controlCall(paths, "health", {})).toMatchObject({ schema: 2, activationPolicy: 3 });
         expect((await readFile(paths.control, "utf8")).trim()).toBe(key);
     } else {
         await expect(ensureBroker(paths)).rejects.toThrow(/Unsupported broker schema/);

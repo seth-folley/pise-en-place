@@ -71,9 +71,9 @@ describe("durable automatic activation policy", () => {
         s.advance(3_600_001);
         expect(s.reserve()!.messages[0].id).toBe(m.id);
     });
-    it.fails("counts an offline, budget-blocked delivery once in attention", () => {
+    it("counts an offline, budget-blocked delivery once in attention", () => {
         const s = setup();
-        for (let i = 0; i < 100; i++) { s.send(); s.finish(s.reserve()!); }
+        for (let i = 0; i < 100; i++) { const message = s.send(); s.finish(s.reserve()!); s.control("resolve", { threadId: message.thread_id }); }
         s.store.disconnect(s.backend);
         s.send();
         expect(s.call<Status>(s.app, "status")).toMatchObject({ attention: 1, automation: { blocked: 1 } });

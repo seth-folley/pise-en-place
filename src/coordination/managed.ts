@@ -24,7 +24,7 @@ async function ensure(paths: TeamPaths): Promise<void> {
             if (health.protocol !== 1 || health.status !== "healthy") throw new Error("Incompatible broker health response; endpoint preserved.");
             if (health.schema !== 1 && health.schema !== SCHEMA_VERSION) throw new Error("Unsupported broker schema; endpoint preserved. Update broker and extension together.");
             const policy = health.activationPolicy ?? 1;
-            if (policy !== 1 && policy !== ACTIVATION_POLICY_VERSION) throw new Error("Unsupported broker activation policy; endpoint preserved.");
+            if (![1, 2, ACTIVATION_POLICY_VERSION].includes(policy)) throw new Error("Unsupported broker activation policy; endpoint preserved.");
             if (health.schema === SCHEMA_VERSION && policy === ACTIVATION_POLICY_VERSION) return true;
             // Known schema/policy upgrade: graceful replacement preserves the activation ledger.
             // In-flight uncertain runs retain their normal conservative pause/recovery behavior.

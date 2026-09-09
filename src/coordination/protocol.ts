@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 export const VERSION = 1;
 export const SCHEMA_VERSION = 2;
-export const ACTIVATION_POLICY_VERSION = 2;
+export const ACTIVATION_POLICY_VERSION = 3;
 export const MAX_FRAME_BYTES = 256 * 1024;
 export const MAX_BODY_BYTES = 16 * 1024;
 export const LEASE_MS = 20_000;
