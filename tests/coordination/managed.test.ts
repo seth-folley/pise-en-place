@@ -24,7 +24,7 @@ async function setup() {
     });
     return { root, paths };
 }
-it.each([1, 2, 99])("upgrades known schema/policy brokers but preserves unknown versions (%i)", async (schema) => {
+it.each([{ schema: 1 }, { schema: 2, policy: 2 }, { schema: 2, policy: 99 }])("upgrades known schema/policy brokers but preserves unknown versions (%o)", async ({ schema, policy }) => {
     const { paths } = await setup();
     const key = await preparePaths(paths); let stops = 0;
     const sockets = new Set<Socket>();
@@ -34,19 +34,19 @@ it.each([1, 2, 99])("upgrades known schema/policy brokers but preserves unknown 
         socket.on("data", (bytes) => {
             for (const value of frames.push(Buffer.from(bytes))) {
                 const req = value as { id: string; op: string };
-                socket.write(encode({ v: 1, id: req.id, ok: true, result: { protocol: 1, schema, status: req.op === "stop" ? "stopping" : "healthy" } }));
+                socket.write(encode({ v: 1, id: req.id, ok: true, result: { protocol: 1, schema, ...(policy === undefined ? {} : { activationPolicy: policy }), status: req.op === "stop" ? "stopping" : "healthy" } }));
                 if (req.op === "stop") { stops++; setTimeout(() => { server.close(); for (const s of sockets) s.destroy(); }, 30); }
             }
         });
     });
     await new Promise<void>((resolve) => server.listen(paths.socket, resolve));
     cleanup.push(async () => { if (server.listening) { for (const s of sockets) s.destroy(); await new Promise<void>((r) => server.close(() => r())); } });
-    if (schema === 1 || schema === 2) {
+    if (schema === 1 || policy === 2) {
         await ensureBroker(paths); expect(stops).toBe(1);
         expect(await controlCall(paths, "health", {})).toMatchObject({ schema: 2, activationPolicy: 3 });
         expect((await readFile(paths.control, "utf8")).trim()).toBe(key);
     } else {
-        await expect(ensureBroker(paths)).rejects.toThrow(/Unsupported broker schema/);
+        await expect(ensureBroker(paths)).rejects.toThrow(/Unsupported broker (schema|activation policy)/);
         expect(stops).toBe(0); expect(server.listening).toBe(true);
     }
 }, 20_000);
