@@ -71,6 +71,13 @@ describe("durable automatic activation policy", () => {
         s.advance(3_600_001);
         expect(s.reserve()!.messages[0].id).toBe(m.id);
     });
+    it.fails("counts an offline, budget-blocked delivery once in attention", () => {
+        const s = setup();
+        for (let i = 0; i < 100; i++) { s.send(); s.finish(s.reserve()!); }
+        s.store.disconnect(s.backend);
+        s.send();
+        expect(s.call<Status>(s.app, "status")).toMatchObject({ attention: 1, automation: { blocked: 1 } });
+    });
     it("revalidates pause and stale work before dispatch, refunds only proven uninserted cancellations", () => {
         const s = setup(); const q = s.send(), batch = s.reserve()!;
         s.control("pause", { paused: true });

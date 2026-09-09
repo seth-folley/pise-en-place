@@ -60,6 +60,13 @@ it("unknown sendMessage acceptance never retries a model automatically", async (
     expect(s.insert).toHaveBeenCalledOnce(); expect(s.notify).toHaveBeenCalledWith(expect.stringContaining("unknown"));
     s.send(); s.automatic.kick(); await new Promise((r) => setTimeout(r, 40)); expect(s.insert).toHaveBeenCalledOnce();
 });
+it("does not start a model for a mixed reserved batch with persisted evidence", async () => {
+    const s = setup({ start: false, persist: false });
+    const persisted = s.send(); s.send(); s.persisted.set(persisted.id, "previous-entry");
+    s.automatic.kick();
+    await expect.poll(() => s.status().participants.find((p) => p.name === "b")?.paused).toBe(1);
+    expect(s.insert).not.toHaveBeenCalled();
+});
 it("an already persisted retry never wakes again, and disk errors still report uncertainty to the broker", async () => {
     const s = setup(); const m = s.send(); s.persisted.set(m.id, "previous-entry"); s.automatic.kick();
     await expect.poll(() => s.status().participants.find((p) => p.name === "b")?.paused).toBe(1);
