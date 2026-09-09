@@ -78,6 +78,14 @@ describe("durable automatic activation policy", () => {
         s.send();
         expect(s.call<Status>(s.app, "status")).toMatchObject({ attention: 1, automation: { blocked: 1 } });
     });
+    it("reconciles proven reserved evidence, refunds the batch, and releases remaining deliveries", () => {
+        const s = setup(), proven = s.send(), pending = s.send(), batch = s.reserve()!;
+        expect(() => s.call(s.backend, "auto-reconcile", { activationId: batch.id, entries: [{ messageId: "foreign", entryId: "entry" }] })).toThrow(/does not belong/);
+        expect(s.call(s.backend, "auto-reconcile", { activationId: batch.id, entries: [{ messageId: proven.id, entryId: "persisted" }] })).toEqual({ state: "cancelled" });
+        expect(s.call<Status>(s.app, "status").automation.roomUsed).toBe(0);
+        expect(s.call<Message>(s.backend, "read", { messageId: proven.id }).deliveries[0]).toMatchObject({ state: "recorded", entry_id: "persisted" });
+        expect(s.reserve()!.messages.map((m) => m.id)).toEqual([pending.id]);
+    });
     it("revalidates pause and stale work before dispatch, refunds only proven uninserted cancellations", () => {
         const s = setup(); const q = s.send(), batch = s.reserve()!;
         s.control("pause", { paused: true });
