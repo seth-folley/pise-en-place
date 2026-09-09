@@ -10,31 +10,7 @@ import { deliverOne, findPersistedEntry, PEER_MESSAGE_TYPE, reconcileDelivery, t
 import { teamPaths } from "../../src/coordination/paths.ts";
 import { messageText, pageText, statusText, widgetLines } from "../../src/coordination/presentation.ts";
 import { HEARTBEAT_MS, MAX_BODY_BYTES, MESSAGE_TYPES, TeamError, safeText, type Binding, type Credential, type Message, type Page, type Params, type Runtime, type Status } from "../../src/coordination/protocol.ts";
-
-const MEMBERSHIP = "team-binding-v1";
-const INSPECT = "team-inspect-v1";
-const WIDGET = "team-room-v1";
-const HELP = `Team coordination · automatic communication
-/team join <room> --name <name> --role <role> [--rejoin]
-/team leave                 Leave this room; keep history
-/team status                Roster, presence, requests, blockers
-/team inbox [cursor] [--history]  Active inbox (or all history)
-/team thread <id> [cursor]  Paginated thread summaries
-/team read <message>        Inspect full message without agent delivery
-/team deliver <message>     Record in agent context at idle; no model run
-/team reconcile <message>   Check this session's persisted delivery evidence
-/team retry <message>       Deliberate retry of uncertain recording
-/team review <message>      Wait, human answer, cancel, or redirect
-/team resolve <thread>      Explicitly close a discussion
-/team pause [local|room]    Persist pause (default local)
-/team resume [local|room]   Resume eligible automatic delivery
-/team help
-
-One room per Pi session in this pilot; multiple isolated rooms can run concurrently.
-Joining starts/reuses the broker automatically; it exits after 60s with no connections.
-Automatic idle-boundary wakeups: questions, decision requests, requested replies, actionable handoffs.
-Limits: no thread cap; 100 activations/room/rolling hour. Abort pauses local automation.
-No moderator or approved-decision tooling.`;
+import { INSPECT_ENTRY_TYPE as INSPECT, MEMBERSHIP_ENTRY_TYPE as MEMBERSHIP, TEAM_HELP as HELP, WIDGET_ID as WIDGET } from "./constants.ts";
 
 function bounded(value: string): string {
     const truncated = truncateHead(safeText(value), { maxBytes: 40 * 1024, maxLines: 1800 });
