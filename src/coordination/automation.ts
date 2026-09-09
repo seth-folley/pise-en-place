@@ -37,22 +37,29 @@ export class AutomaticDelivery {
         this.busy = true;
         let batch: Activation | null = null;
         try {
-            batch = await transport.call<Activation | null>("auto-reserve", { roomId: this.host.binding.roomId });
+            batch = await transport.call("auto-reserve", { roomId: this.host.binding.roomId });
             if (!batch) return;
             if (!this.ready()) { await this.cancel(transport, batch); return; }
             // Explicit retry may encounter persisted logical messages. Reconcile them atomically,
             // refund this never-dispatched activation, then reserve only remaining eligible work.
             const entries: { messageId: string; entryId: string }[] = [];
-            for (const message of batch.messages) {
-                const entryId = await this.host.persistedEntry(message.id);
-                if (entryId) entries.push({ messageId: message.id, entryId });
+            try {
+                for (const message of batch.messages) {
+                    const entryId = await this.host.persistedEntry(message.id);
+                    if (entryId) entries.push({ messageId: message.id, entryId });
+                }
+            } catch (error) {
+                // Repeated evidence failures must not churn reservations or wake a model.
+                // Hold locally until explicit resume; absence/error never implies recording.
+                this.held = true;
+                throw error;
             }
             if (entries.length) {
                 await transport.call("auto-reconcile", { roomId: this.host.binding.roomId, activationId: batch.id, entries });
                 return;
             }
             if (!this.ready()) { await this.cancel(transport, batch); return; }
-            const permit = await transport.call<{ state: string }>("auto-dispatch", { roomId: this.host.binding.roomId, activationId: batch.id });
+            const permit = await transport.call("auto-dispatch", { roomId: this.host.binding.roomId, activationId: batch.id });
             if (permit.state !== "dispatched") return;
             if (!this.ready()) { await this.cancel(transport, batch); return; }
             const { binding } = this.host;

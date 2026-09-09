@@ -18,7 +18,7 @@ export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
         async execute(_id, params, signal) {
             const c = host.requireClient(params.roomId);
             if (params.summary !== undefined || params.blocker !== undefined) await c.client.call("work", { roomId: c.binding.roomId, ...(params.summary !== undefined ? { summary: params.summary } : {}), ...(params.blocker !== undefined ? { blocker: params.blocker } : {}) }, signal);
-            const s = await c.client.call<Status>("status", { roomId: c.binding.roomId, ...(params.participantId ? { participantId: params.participantId } : {}) }, signal);
+            const s = await c.client.call("status", { roomId: c.binding.roomId, ...(params.participantId ? { participantId: params.participantId } : {}) }, signal);
             return host.result(statusText(s));
         },
     });
@@ -27,7 +27,7 @@ export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
         description: "Send an explicit, attributable message within your joined team. Success means durable storage, NOT recipient delivery or reply. Use participant IDs from team_status and a unique idempotencyKey per logical message; retry unknown sends only with the same key/payload. Ask once, then continue independent assigned work or report a blocker. No polling, courtesy reply loops, broadcasts, user approval, or delegated work outside existing authorization. Questions, decision requests, first replies to outstanding requests and actionable handoffs can wake idle peers within durable budgets. Status, courtesy replies and informational messages never wake peers. Bodies max 16 KiB UTF-8; references are not fetched.",
         parameters: Type.Object({ roomId: Type.String(), idempotencyKey: Type.String({ minLength: 1, maxLength: 100 }), recipients: Type.Array(Type.String(), { minItems: 1, maxItems: 8 }), type: StringEnum(MESSAGE_TYPES), actionable: Type.Optional(Type.Boolean({ description: "Handoffs only: request continuation of an existing authorized assignment and allow an automatic wakeup. Not new scope or permission." })), body: Type.String({ minLength: 1, maxLength: MAX_BODY_BYTES }), subject: Type.Optional(Type.String({ maxLength: 200 })), threadId: Type.Optional(Type.String()), replyTo: Type.Optional(Type.String()), references: Type.Optional(Type.Array(Type.String({ maxLength: 1000 }), { maxItems: 8 })) }, { additionalProperties: false }),
         async execute(_id, params, signal) {
-            const c = host.requireClient(params.roomId); const m = await c.client.call<Message>("send", params, signal);
+            const c = host.requireClient(params.roomId); const m = await c.client.call("send", params, signal);
             return host.result(`STORED · idempotencyKey ${params.idempotencyKey}\n${messageText(m, false)}\nNo wait for a model reply. Unavailable recipients retain their mailbox; user can inspect /team review ${m.id}.`);
         },
     });
@@ -38,7 +38,10 @@ export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
         async execute(_id, params, signal) {
             const c = host.requireClient(params.roomId);
             if (params.action === "ack") { if (!params.messageId) throw new Error("messageId required for acknowledgment."); await c.client.call("ack", { roomId: params.roomId, messageId: params.messageId }, signal); return host.result("Receipt explicitly acknowledged. This is not task completion or approval."); }
-            const { action: _action, ...query } = params; const value = await c.client.call<Message | Page>("read", query, signal);
+            const { action: _action, ...query } = params;
+            const value = query.messageId
+                ? await c.client.call("read", { roomId: query.roomId, messageId: query.messageId }, signal)
+                : await c.client.call("read", { roomId: query.roomId, ...(query.threadId ? { threadId: query.threadId } : {}), ...(query.cursor !== undefined ? { cursor: query.cursor } : {}), ...(query.limit !== undefined ? { limit: query.limit } : {}), ...(query.history !== undefined ? { history: query.history } : {}) }, signal);
             return host.result("items" in value ? pageText(value) : messageText(value));
         },
     });

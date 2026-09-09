@@ -71,20 +71,40 @@ describe("durable automatic activation policy", () => {
         s.advance(3_600_001);
         expect(s.reserve()!.messages[0].id).toBe(m.id);
     });
-    it("counts an offline, budget-blocked delivery once in attention", () => {
-        const s = setup();
-        for (let i = 0; i < 100; i++) { const message = s.send(); s.finish(s.reserve()!); s.control("resolve", { threadId: message.thread_id }); }
-        s.store.disconnect(s.backend);
-        s.send();
-        expect(s.call<Status>(s.app, "status")).toMatchObject({ attention: 1, automation: { blocked: 1 } });
+    it("counts attention as distinct affected deliveries across offline and budget conditions", () => {
+        const offline = setup();
+        offline.store.disconnect(offline.backend);
+        offline.send();
+        expect(offline.call<Status>(offline.app, "status")).toMatchObject({ attention: 1, automation: { blocked: 0 } });
+
+        const blocked = setup();
+        for (let i = 0; i < 100; i++) { const message = blocked.send(); blocked.finish(blocked.reserve()!); blocked.control("resolve", { threadId: message.thread_id }); }
+        blocked.send();
+        expect(blocked.call<Status>(blocked.app, "status")).toMatchObject({ attention: 1, automation: { blocked: 1 } });
+        blocked.send();
+        expect(blocked.call<Status>(blocked.app, "status")).toMatchObject({ attention: 2, automation: { blocked: 2 } });
+
+        blocked.store.disconnect(blocked.backend);
+        expect(blocked.call<Status>(blocked.app, "status")).toMatchObject({ attention: 2, automation: { blocked: 2 } });
     });
     it("reconciles proven reserved evidence, refunds the batch, and releases remaining deliveries", () => {
         const s = setup(), proven = s.send(), pending = s.send(), batch = s.reserve()!;
-        expect(() => s.call(s.backend, "auto-reconcile", { activationId: batch.id, entries: [{ messageId: "foreign", entryId: "entry" }] })).toThrow(/does not belong/);
+        expect(() => s.call(s.backend, "auto-reconcile", { activationId: batch.id, entries: [] })).toThrow(/Invalid recording evidence/);
+        expect(() => s.call(s.backend, "auto-reconcile", { activationId: batch.id, entries: [null] })).toThrow(/Invalid recording evidence/);
+        expect(() => s.call(s.backend, "auto-reconcile", { activationId: batch.id, entries: [{ messageId: proven.id, entryId: "persisted" }, { messageId: "foreign", entryId: "entry" }] })).toThrow(/does not belong/);
+        expect(s.call<Message>(s.backend, "read", { messageId: proven.id }).deliveries[0]).toMatchObject({ state: "claimed", entry_id: null });
+        expect(() => s.call({ ...s.backend, sessionId: "foreign" }, "auto-reconcile", { activationId: batch.id, entries: [{ messageId: proven.id, entryId: "persisted" }] })).toThrow(/expired/);
+        expect(() => s.call({ ...s.backend, generation: s.backend.generation + 1 }, "auto-reconcile", { activationId: batch.id, entries: [{ messageId: proven.id, entryId: "persisted" }] })).toThrow(/expired/);
         expect(s.call(s.backend, "auto-reconcile", { activationId: batch.id, entries: [{ messageId: proven.id, entryId: "persisted" }] })).toEqual({ state: "cancelled" });
         expect(s.call<Status>(s.app, "status").automation.roomUsed).toBe(0);
         expect(s.call<Message>(s.backend, "read", { messageId: proven.id }).deliveries[0]).toMatchObject({ state: "recorded", entry_id: "persisted" });
         expect(s.reserve()!.messages.map((m) => m.id)).toEqual([pending.id]);
+    });
+    it("rejects reserved-batch reconciliation from a valid newer connection generation", () => {
+        const s = setup(), message = s.send(), batch = s.reserve()!;
+        s.store.disconnect(s.backend);
+        const reconnected = s.store.connect({ roomId: s.b.roomId, participantId: s.b.participantId, sessionId: s.b.sessionId, token: s.b.token }, "new-connection");
+        expect(() => s.call(reconnected, "auto-reconcile", { activationId: batch.id, entries: [{ messageId: message.id, entryId: "persisted" }] })).toThrow(/earlier connection generation/);
     });
     it("revalidates pause and stale work before dispatch, refunds only proven uninserted cancellations", () => {
         const s = setup(); const q = s.send(), batch = s.reserve()!;

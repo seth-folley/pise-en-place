@@ -14,7 +14,7 @@ function setup() {
     const connect = (c: typeof a) => store.connect({ participantId: c.participantId, roomId: c.roomId, sessionId: c.sessionId, token: c.token }, c.name);
     const app = connect(a), backend = connect(b);
     const m = store.dispatch(app, "send", { roomId: a.roomId, idempotencyKey: "q", recipients: [b.participantId], type: "question", subject: "Null?", body: "Can fields be null?" }) as Message;
-    const transport: DeliveryTransport = { async call<T>(op: string, params: Params) { return store.dispatch(backend, op, params) as T; } };
+    const transport: DeliveryTransport = { async call(op, params) { return store.dispatch(backend, op, params as Params) as never; } };
     let entry: string | undefined;
     let ready = true, persist = true;
     const insert = vi.fn((_content: string, _marker: Marker) => { if (persist) entry = "entry-1"; });
@@ -40,13 +40,13 @@ describe("fake Pi adapter: no LLM credentials or model calls", () => {
     });
     it("rechecks session/pause after asynchronous claim and never mutates in-flight local work", async () => {
         const s = setup();
-        const transport: DeliveryTransport = { async call<T>(op: string, params: Params) { const result = await s.transport.call<T>(op, params); if (op === "claim") s.setReady(false); return result; } };
+        const transport: DeliveryTransport = { async call(op, params) { const result = await s.transport.call(op, params); if (op === "claim") s.setReady(false); return result as never; } };
         await expect(deliverOne(transport, s.adapter, s.m.id)).rejects.toThrow(/before insertion/);
         expect(s.insert).not.toHaveBeenCalled(); expect(s.delivery().state).toBe("uncertain");
     });
     it("handles insertion-before-receipt crash without duplicate model execution claims", async () => {
         const s = setup();
-        const transport: DeliveryTransport = { async call<T>(op: string, params: Params) { if (op === "receipt") throw new Error("lost receipt"); return s.transport.call<T>(op, params); } };
+        const transport: DeliveryTransport = { async call(op, params) { if (op === "receipt") throw new Error("lost receipt"); return s.transport.call(op, params) as Promise<never>; } };
         await expect(deliverOne(transport, s.adapter, s.m.id)).rejects.toThrow(/lost receipt/);
         expect(s.delivery().state).toBe("uncertain");
         expect(await reconcileDelivery(s.transport, s.adapter, s.delivery())).toBe(true);
@@ -61,7 +61,7 @@ describe("fake Pi adapter: no LLM credentials or model calls", () => {
     });
     it("deduplicates even if the human retried a delivery that has persisted evidence", async () => {
         const s = setup();
-        const broken: DeliveryTransport = { async call<T>(op: string, p: Params) { if (op === "receipt") throw new Error("lost"); return s.transport.call<T>(op, p); } };
+        const broken: DeliveryTransport = { async call(op, params) { if (op === "receipt") throw new Error("lost"); return s.transport.call(op, params) as Promise<never>; } };
         await expect(deliverOne(broken, s.adapter, s.m.id)).rejects.toThrow();
         s.store.dispatch({ kind: "control" }, "retry", { roomId: s.b.roomId, participantId: s.b.participantId, messageId: s.m.id });
         await deliverOne(s.transport, s.adapter, s.m.id); expect(s.insert).toHaveBeenCalledOnce();

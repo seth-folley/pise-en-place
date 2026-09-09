@@ -1,10 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { TeamStore } from "../../src/coordination/store.ts";
 import { AutomaticDelivery, type BatchMarker } from "../../src/coordination/automation.ts";
+import type { DeliveryTransport } from "../../src/coordination/delivery.ts";
 import type { Message, Params, Status } from "../../src/coordination/protocol.ts";
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const fn of cleanup.splice(0).reverse()) fn(); });
-function setup(options: { persist?: boolean; start?: boolean; failEvidence?: boolean; startTimeout?: number } = {}) {
+function setup(options: { persist?: boolean; start?: boolean; failEvidence?: boolean; failBeforeInsert?: boolean; startTimeout?: number } = {}) {
     const store = new TeamStore(":memory:"); cleanup.push(() => store.close());
     const a = store.enroll({ room: "r", name: "a", role: "worker", sessionId: "a" });
     const b = store.enroll({ room: "r", name: "b", role: "worker", sessionId: "b" });
@@ -13,7 +14,7 @@ function setup(options: { persist?: boolean; start?: boolean; failEvidence?: boo
     const persisted = new Map<string, string>();
     const notify = vi.fn(), changed = vi.fn();
     let hook: ((op: string) => void) | undefined;
-    const transport = { async call<T>(op: string, p: Params): Promise<T> { const value = store.dispatch(bb, op, p) as T; hook?.(op); return value; } };
+    const transport: DeliveryTransport = { async call(op, params) { const value = store.dispatch(bb, op, params as Params); hook?.(op); return value as never; } };
     let automatic: AutomaticDelivery;
     const insert = vi.fn((_content: string, marker: BatchMarker) => {
         inserted = true;
@@ -22,7 +23,7 @@ function setup(options: { persist?: boolean; start?: boolean; failEvidence?: boo
     });
     automatic = new AutomaticDelivery({ binding: b, transport: () => transport,
         ready: () => ready && !(store.dispatch(bb, "status", { roomId: b.roomId }) as Status).participants.find((p) => p.id === b.participantId)!.paused,
-        insert, persistedEntry: async (id) => { if (inserted && options.failEvidence) throw new Error("disk unavailable"); return persisted.get(id); }, notify, changed,
+        insert, persistedEntry: async (id) => { if (options.failBeforeInsert || (inserted && options.failEvidence)) throw new Error("disk unavailable"); return persisted.get(id); }, notify, changed,
     }, 1, options.startTimeout ?? 25);
     cleanup.push(() => automatic.dispose());
     const send = () => store.dispatch(aa, "send", { roomId: a.roomId, idempotencyKey: `q-${seq++}`, type: "question", recipients: [b.participantId], subject: "Info", body: "Need information" }) as Message;
@@ -59,6 +60,14 @@ it("unknown sendMessage acceptance never retries a model automatically", async (
     await expect.poll(() => s.status().participants.find((p) => p.name === "b")?.paused).toBe(1);
     expect(s.insert).toHaveBeenCalledOnce(); expect(s.notify).toHaveBeenCalledWith(expect.stringContaining("unknown"));
     s.send(); s.automatic.kick(); await new Promise((r) => setTimeout(r, 40)); expect(s.insert).toHaveBeenCalledOnce();
+});
+it("holds after pre-dispatch evidence failures instead of churning reservations", async () => {
+    const s = setup({ failBeforeInsert: true }); s.send(); s.automatic.kick();
+    await expect.poll(() => s.notify.mock.calls.length).toBe(1);
+    expect(s.insert).not.toHaveBeenCalled(); expect(s.status().automation.roomUsed).toBe(0);
+    for (let i = 0; i < 5; i++) s.automatic.kick();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(s.notify).toHaveBeenCalledOnce(); expect(s.insert).not.toHaveBeenCalled();
 });
 it("reconciles a mixed reserved batch before waking only its unproven delivery", async () => {
     const s = setup();

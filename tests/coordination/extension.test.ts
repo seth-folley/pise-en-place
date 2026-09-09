@@ -44,7 +44,7 @@ function fakeSession(sessionId: string, sessionFile: string, entries: Entry[] = 
     const emit = async (name: string, event: Record<string, unknown> = {}) => events.get(name)?.(event, context);
     cleanups.push(() => emit("session_shutdown", { reason: "quit" }));
     const execute = (name: string, params: Record<string, unknown>) => tools.get(name)!.execute("call-id", params, undefined, undefined, context);
-    return { context, emit, entries, sendMessage, notify, setWidget, execute, command: (args: string) => command(args, context), setIdle(v: boolean) { idle = v; }, setApproval(v: boolean) { approval = v; } };
+    return { context, emit, entries, tools, sendMessage, notify, setWidget, execute, command: (args: string) => command(args, context), setIdle(v: boolean) { idle = v; }, setApproval(v: boolean) { approval = v; } };
 }
 async function setup() {
     const root = mkdtempSync("/tmp/pi-team-ext-"); cleanups.push(() => rmSync(root, { recursive: true, force: true }));
@@ -91,10 +91,10 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
     });
     it("joins, renders a bounded widget, reads without wakeups and manually inserts one message", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");
-        const b = await controlCall<Credential>(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
+        const b = await controlCall(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
         const client = await TeamClient.connect(s.paths.socket, { roomId: b.roomId, participantId: b.participantId, sessionId: b.sessionId, token: b.token }); cleanups.push(() => client.close());
-        const status = await client.call<Status>("status", { roomId: b.roomId }); const app = status.participants.find((p) => p.name === "app")!;
-        const m = await client.call<Message>("send", { roomId: b.roomId, idempotencyKey: "q", recipients: [app.id], type: "question", subject: "Null fields", body: "Can fields be null?" });
+        const status = await client.call("status", { roomId: b.roomId }); const app = status.participants.find((p) => p.name === "app")!;
+        const m = await client.call("send", { roomId: b.roomId, idempotencyKey: "q", recipients: [app.id], type: "question", subject: "Null fields", body: "Can fields be null?" });
         await s.app.command("inbox"); await s.app.command(`read ${m.id}`);
         expect(s.app.sendMessage).not.toHaveBeenCalled();
         s.app.setIdle(false); await s.app.command(`deliver ${m.id}`);
@@ -103,7 +103,7 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         s.app.setIdle(true); await s.app.command(`deliver ${m.id}`);
         expect(s.app.sendMessage).toHaveBeenCalledOnce();
         expect(s.app.sendMessage.mock.calls[0][1]).toEqual({ deliverAs: "followUp", triggerTurn: false });
-        const saved = await client.call<Message>("read", { roomId: b.roomId, messageId: m.id }); expect(saved.deliveries[0].state).toBe("recorded");
+        const saved = await client.call("read", { roomId: b.roomId, messageId: m.id }); expect(saved.deliveries[0].state).toBe("recorded");
         const factory = [...s.app.setWidget.mock.calls].reverse().find((args) => typeof args[1] === "function")![1];
         for (const color of ["dark", "light"]) {
             const theme = {
@@ -124,14 +124,16 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
                 }
             }
         }
-        // Membership entries and status never persist credentials.
+        // Membership entries, status, and agent-facing schemas never expose control credentials.
         expect(JSON.stringify(s.app.entries)).not.toContain('"token"');
+        const schemas = JSON.stringify([...s.app.tools.values()].map((tool) => tool.parameters));
+        expect(schemas).not.toMatch(/token|control|credential/i);
     });
     it("automatic delivery waits for all nested user prompts to close", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");
-        const b = await controlCall<Credential>(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
+        const b = await controlCall(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
         const client = await TeamClient.connect(s.paths.socket, { roomId: b.roomId, participantId: b.participantId, sessionId: b.sessionId, token: b.token }); cleanups.push(() => client.close());
-        const status = await client.call<Status>("status", { roomId: b.roomId });
+        const status = await client.call("status", { roomId: b.roomId });
         await s.app.emit("ui_prompt_start"); await s.app.emit("ui_prompt_start");
         await client.call("send", { roomId: b.roomId, idempotencyKey: "nested-ui", recipients: [status.participants.find((p) => p.name === "app")!.id], type: "question", subject: "UI", body: "Need input" });
         await s.app.emit("ui_prompt_end");

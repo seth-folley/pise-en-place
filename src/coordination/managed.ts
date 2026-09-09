@@ -20,7 +20,7 @@ async function ensure(paths: TeamPaths): Promise<void> {
     // Do not inspect a half-written key or a bound-but-not-yet-initialized broker.
     try {
         const ready = await startupGate(paths, async () => {
-            const health = await controlCall<{ protocol: number; schema: number; status: string; activationPolicy?: number }>(paths, "health", {});
+            const health = await controlCall(paths, "health", {});
             if (health.protocol !== 1 || health.status !== "healthy") throw new Error("Incompatible broker health response; endpoint preserved.");
             if (health.schema !== 1 && health.schema !== SCHEMA_VERSION) throw new Error("Unsupported broker schema; endpoint preserved. Update broker and extension together.");
             const policy = health.activationPolicy ?? 1;

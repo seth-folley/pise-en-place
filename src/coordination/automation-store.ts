@@ -68,7 +68,7 @@ export class AutomationStore {
         }
         if (op === "auto-reconcile") {
             if (a.state !== "reserved") fail("STATE", "Only an undispatched activation can be reconciled.");
-            if (!Array.isArray(p.entries) || p.entries.length > MAX_AUTO_BATCH) fail("INVALID", "Invalid recording evidence.");
+            if (!Array.isArray(p.entries) || p.entries.length === 0 || p.entries.length > MAX_AUTO_BATCH) fail("INVALID", "Invalid recording evidence.");
             for (const value of p.entries) {
                 if (!value || typeof value !== "object" || Array.isArray(value)) fail("INVALID", "Invalid recording evidence.");
                 const entry = value as Params; fields(entry, ["messageId", "entryId"]);
