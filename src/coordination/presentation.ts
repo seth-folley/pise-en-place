@@ -1,10 +1,11 @@
 import { safeText, type Message, type Page, type Status } from "./protocol.ts";
 
-export function statusText(status: Status, stale = false): string {
+export function statusText(status: Status, stale = false, localHold = false): string {
     const lines = [
         `TEAM ${status.room.name} (${status.room.id})`,
         `${stale ? "Broker unavailable · cached presence STALE" : "Broker connected"} · observed ${new Date(status.observedAt).toISOString()}`,
         `Automatic idle-boundary delivery · room pause ${status.room.paused ? "ON" : "off"}${stale ? " (cached)" : ""}`,
+        ...(localHold ? ["LOCAL HOLD · automatic delivery paused locally · inspect/reconcile as needed, then /team resume local"] : []),
         `${status.questions} open requests · ${status.discussions} open threads · ${status.attention} attention items`, "",
     ];
     if (status.automation) lines.push(`Automatic activations: ${status.automation.roomUsed}/${status.automation.roomLimit} this rolling hour · ${status.automation.threadLimit === null ? "no thread cap" : `${status.automation.threadLimit}/thread lifetime`} · ${status.automation.blocked} pending deliveries need human attention (budget exhausted).`);
@@ -40,12 +41,12 @@ export function pageText(page: Page): string {
     ].join("\n"));
 }
 /** Plain lines, themed/truncated by the TUI adapter. No prompt content or background model work. */
-export function widgetLines(status: Status | undefined, stale: boolean, roomName: string): string[] {
-    if (!status) return [`TEAM ${roomName} · broker disconnected/connecting`, "  Presence unknown · /team status"];
+export function widgetLines(status: Status | undefined, stale: boolean, roomName: string, localHold = false): string[] {
+    if (!status) return [`TEAM ${roomName} · broker disconnected/connecting${localHold ? " · LOCAL HOLD" : ""}`, "  Presence unknown · /team status"];
     const joined = status.participants.filter((p) => p.joined);
     const connected = joined.filter((p) => p.presence === "connected").length;
     const lines = [
-        `TEAM ${status.room.name} · ${stale ? "broker unavailable · cached presence STALE" : `${connected}/${joined.length} connected`}${status.room.paused ? " · PAUSED" : ""}`,
+        `TEAM ${status.room.name} · ${stale ? "broker unavailable · cached presence STALE" : `${connected}/${joined.length} connected`}${status.room.paused ? " · PAUSED" : ""}${localHold ? " · LOCAL HOLD" : ""}`,
     ];
     for (const p of joined.slice(0, 4)) lines.push(`  ${p.name}${p.id === status.you ? " (you)" : ""} · ${stale ? "unknown" : p.presence === "connected" ? p.runtime : p.presence}${p.paused ? " · paused" : ""}${p.needsReply ? ` · ${p.needsReply} needs reply` : ""}`);
     if (joined.length > 4) lines.push(`  … ${joined.length - 4} more participants`);

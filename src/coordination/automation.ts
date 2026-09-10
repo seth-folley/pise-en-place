@@ -29,6 +29,7 @@ export class AutomaticDelivery {
         this.timer = setTimeout(() => { this.timer = undefined; void this.pump(); }, this.batchDelay);
         this.timer.unref();
     }
+    get isHeld(): boolean { return this.held; }
     resume(): void { this.held = false; this.kick(); }
     private ready(): boolean { return !this.disposed && !this.held && this.host.ready(); }
     private async pump(): Promise<void> {
@@ -83,7 +84,9 @@ export class AutomaticDelivery {
         } catch (e) {
             if (this.active?.submitted) await this.finish("unknown");
             else if (batch) await this.cancel(transport, batch).catch(() => {});
-            if (!this.disposed) this.host.notify(`Automatic team delivery could not proceed: ${e instanceof Error ? e.message : String(e)}`);
+            if (!this.disposed) this.host.notify(this.held
+                ? `Automatic team delivery held because persisted session evidence could not be read. Fix session-file access, then run /team resume local. ${e instanceof Error ? e.message : String(e)}`
+                : `Automatic team delivery could not proceed: ${e instanceof Error ? e.message : String(e)}`);
         } finally { this.busy = false; if (batch && !this.disposed) { this.host.changed(); this.kick(); } }
     }
     private cancel(transport: DeliveryTransport, batch: Activation) {

@@ -10,7 +10,7 @@ function setup(options: { persist?: boolean; start?: boolean; failEvidence?: boo
     const a = store.enroll({ room: "r", name: "a", role: "worker", sessionId: "a" });
     const b = store.enroll({ room: "r", name: "b", role: "worker", sessionId: "b" });
     const actor = (c: typeof a) => store.connect({ roomId: c.roomId, participantId: c.participantId, sessionId: c.sessionId, token: c.token }, c.name);
-    const aa = actor(a), bb = actor(b); let ready = true, inserted = false, seq = 0;
+    const aa = actor(a), bb = actor(b); let ready = true, inserted = false, seq = 0, failBeforeInsert = options.failBeforeInsert ?? false;
     const persisted = new Map<string, string>();
     const notify = vi.fn(), changed = vi.fn();
     let hook: ((op: string) => void) | undefined;
@@ -23,12 +23,12 @@ function setup(options: { persist?: boolean; start?: boolean; failEvidence?: boo
     });
     automatic = new AutomaticDelivery({ binding: b, transport: () => transport,
         ready: () => ready && !(store.dispatch(bb, "status", { roomId: b.roomId }) as Status).participants.find((p) => p.id === b.participantId)!.paused,
-        insert, persistedEntry: async (id) => { if (options.failBeforeInsert || (inserted && options.failEvidence)) throw new Error("disk unavailable"); return persisted.get(id); }, notify, changed,
+        insert, persistedEntry: async (id) => { if (failBeforeInsert || (inserted && options.failEvidence)) throw new Error("disk unavailable"); return persisted.get(id); }, notify, changed,
     }, 1, options.startTimeout ?? 25);
     cleanup.push(() => automatic.dispose());
     const send = () => store.dispatch(aa, "send", { roomId: a.roomId, idempotencyKey: `q-${seq++}`, type: "question", recipients: [b.participantId], subject: "Info", body: "Need information" }) as Message;
     const status = () => store.dispatch(bb, "status", { roomId: b.roomId }) as Status;
-    return { automatic, insert, notify, send, status, persisted, setReady: (v: boolean) => { ready = v; }, setHook: (fn: (op: string) => void) => { hook = fn; }, resume: () => store.dispatch({ kind: "control" }, "pause", { roomId: b.roomId, participantId: b.participantId, paused: false }) };
+    return { automatic, insert, notify, send, status, persisted, setReady: (v: boolean) => { ready = v; }, setFailBeforeInsert: (v: boolean) => { failBeforeInsert = v; }, setHook: (fn: (op: string) => void) => { hook = fn; }, resume: () => store.dispatch({ kind: "control" }, "pause", { roomId: b.roomId, participantId: b.participantId, paused: false }) };
 }
 it("coalesces notifications, preserves peer authority labels, and records one persisted batch", async () => {
     const s = setup(); s.send(); s.send();
@@ -61,13 +61,19 @@ it("unknown sendMessage acceptance never retries a model automatically", async (
     expect(s.insert).toHaveBeenCalledOnce(); expect(s.notify).toHaveBeenCalledWith(expect.stringContaining("unknown"));
     s.send(); s.automatic.kick(); await new Promise((r) => setTimeout(r, 40)); expect(s.insert).toHaveBeenCalledOnce();
 });
-it("holds after pre-dispatch evidence failures instead of churning reservations", async () => {
+it("exposes pre-dispatch evidence holds, avoids churn, and retries after explicit resume", async () => {
     const s = setup({ failBeforeInsert: true }); s.send(); s.automatic.kick();
     await expect.poll(() => s.notify.mock.calls.length).toBe(1);
+    expect(s.automatic.isHeld).toBe(true);
+    expect(s.notify).toHaveBeenCalledWith(expect.stringMatching(/persisted session evidence.*\/team resume local/));
     expect(s.insert).not.toHaveBeenCalled(); expect(s.status().automation.roomUsed).toBe(0);
     for (let i = 0; i < 5; i++) s.automatic.kick();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(s.notify).toHaveBeenCalledOnce(); expect(s.insert).not.toHaveBeenCalled();
+
+    s.setFailBeforeInsert(false); s.automatic.resume();
+    await expect.poll(() => s.insert.mock.calls.length).toBe(1);
+    expect(s.automatic.isHeld).toBe(false);
 });
 it("reconciles a mixed reserved batch before waking only its unproven delivery", async () => {
     const s = setup();

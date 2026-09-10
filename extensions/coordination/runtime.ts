@@ -42,8 +42,9 @@ export class CoordinationRuntime {
     get client(): TeamClient | undefined { return this._client; }
     get status(): Status | undefined { return this._status; }
     get lastError(): string { return this._lastError; }
+    get automaticHeld(): boolean { return this.automatic?.isHeld ?? false; }
     current(context: ExtensionContext): boolean { return !!this.ctx && this.ctx.sessionManager.getSessionId() === context.sessionManager.getSessionId(); }
-    private widget(): void { renderWidget(this.ctx, this._binding, this._status, !!this._client); }
+    private widget(): void { renderWidget(this.ctx, this._binding, this._status, !!this._client, this.automaticHeld); }
 
     async refresh(): Promise<void> {
         const client = this._client, binding = this._binding, epoch = this.epoch;

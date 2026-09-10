@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { messageText, pageText, statusText } from "../../src/coordination/presentation.ts";
-import { TeamError, type Message, type Page, type Params, type Status } from "../../src/coordination/protocol.ts";
+import { TeamError } from "../../src/coordination/protocol.ts";
 import { TEAM_HELP as HELP } from "./constants.ts";
 import { CoordinationRuntime, errorText } from "./runtime.ts";
 
@@ -32,7 +32,7 @@ export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRunti
                 const binding = runtime.binding;
                 if (!runtime.client && binding && op === "status") {
                     if (rest.length && rest[0] !== binding.roomName && rest[0] !== binding.roomId) throw new Error("This session is not enrolled in that room.");
-                    runtime.inspect(runtime.status ? `${statusText(runtime.status, true)}\n${runtime.lastError}` : `TEAM ${binding.roomName} · broker unavailable · presence unknown\n${runtime.lastError}\nAutomatic reconnect is pending; local coding can continue.`);
+                    runtime.inspect(runtime.status ? `${statusText(runtime.status, true, runtime.automaticHeld)}\n${runtime.lastError}` : `TEAM ${binding.roomName} · broker unavailable · presence unknown${runtime.automaticHeld ? " · LOCAL HOLD" : ""}\n${runtime.lastError}\nAutomatic reconnect is pending; local coding can continue.${runtime.automaticHeld ? " Inspect/reconcile as needed, then /team resume local." : ""}`);
                     return;
                 }
                 if (!runtime.client && binding && op === "leave") {
@@ -45,7 +45,7 @@ export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRunti
                 if (op === "status") {
                     if (rest.length && rest[0] !== connection.binding.roomName && rest[0] !== connection.binding.roomId) throw new Error("This session is not enrolled in that room.");
                     if (rest.length > 2) throw new Error("Usage: /team status [joined-room] [participant-id]");
-                    runtime.inspect(statusText(await connection.client.call("status", { ...scope, ...(rest[1] ? { participantId: rest[1] } : {}) })));
+                    runtime.inspect(statusText(await connection.client.call("status", { ...scope, ...(rest[1] ? { participantId: rest[1] } : {}) }), false, runtime.automaticHeld));
                     return;
                 }
                 if (op === "inbox" || op === "thread" || op === "read") {

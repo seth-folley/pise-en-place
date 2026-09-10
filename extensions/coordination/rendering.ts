@@ -6,22 +6,22 @@ import { widgetLines } from "../../src/coordination/presentation.ts";
 import { safeText, type Binding, type Status } from "../../src/coordination/protocol.ts";
 import { INSPECT_ENTRY_TYPE, WIDGET_ID } from "./constants.ts";
 
-export function renderWidget(context: ExtensionContext | undefined, binding: Binding | undefined, status: Status | undefined, connected: boolean): void {
+export function renderWidget(context: ExtensionContext | undefined, binding: Binding | undefined, status: Status | undefined, connected: boolean, localHold = false): void {
     if (!context?.hasUI) return;
     if (!binding) { context.ui.setWidget(WIDGET_ID, undefined); return; }
     if (context.mode !== "tui") {
-        context.ui.setWidget(WIDGET_ID, widgetLines(status, !connected, binding.roomName)); return;
+        context.ui.setWidget(WIDGET_ID, widgetLines(status, !connected, binding.roomName, localHold)); return;
     }
     context.ui.setWidget(WIDGET_ID, (_tui, theme) => ({
         invalidate() {},
         render(width) {
-            const lines = widgetLines(status, !connected, binding.roomName);
+            const lines = widgetLines(status, !connected, binding.roomName, localHold);
             if (width < 4) return lines.map((line) => truncateToWidth(line, Math.max(0, width)));
             const innerWidth = width - 4;
             const title = truncateToWidth(` ${lines[0]} `, width - 3);
             const top = `╭─${theme.fg("accent", theme.bold(title))}${theme.fg("muted", "─".repeat(width - 3 - visibleWidth(title)))}╮`;
             const rows = lines.slice(1).map((line) => {
-                const color = /disconnected|STALE|PAUSED|unknown/.test(line) ? "warning" : "muted";
+                const color = /disconnected|STALE|PAUSED|LOCAL HOLD|unknown/.test(line) ? "warning" : "muted";
                 const text = truncateToWidth(theme.fg(color, line.replace(/^  /, "")), innerWidth);
                 return `│ ${text}${" ".repeat(Math.max(0, innerWidth - visibleWidth(text)))} │`;
             });

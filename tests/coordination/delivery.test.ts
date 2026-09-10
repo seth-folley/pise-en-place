@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deliverOne, findPersistedEntry, PEER_MESSAGE_TYPE, reconcileDelivery, type DeliveryAdapter, type DeliveryTransport, type Marker } from "../../src/coordination/delivery.ts";
 import { TeamStore } from "../../src/coordination/store.ts";
-import { widgetLines } from "../../src/coordination/presentation.ts";
+import { statusText, widgetLines } from "../../src/coordination/presentation.ts";
 import { type Binding, type Message, type Params, type Status } from "../../src/coordination/protocol.ts";
 
 const cleanups: (() => unknown | Promise<unknown>)[] = [];
@@ -82,6 +82,8 @@ describe("fake Pi adapter: no LLM credentials or model calls", () => {
         const status = s.store.dispatch(s.app, "status", { roomId: s.a.roomId }) as Status;
         expect(widgetLines(status, false, "catalog").join("\n")).toContain("backend · idle · 1 needs reply");
         const stale = widgetLines(status, true, "catalog").join("\n"); expect(stale).toContain("STALE"); expect(stale).not.toContain("backend · idle");
+        expect(widgetLines(status, false, "catalog", true).join("\n")).toContain("LOCAL HOLD");
+        expect(statusText(status, false, true)).toMatch(/LOCAL HOLD.*\/team resume local/);
         expect(widgetLines(status, false, "catalog").length).toBeLessThanOrEqual(7);
     });
 });
