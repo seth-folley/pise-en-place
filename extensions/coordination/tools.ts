@@ -1,13 +1,14 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { messageText, pageText, statusText } from "../../src/coordination/presentation.ts";
 import { TeamClient } from "../../src/coordination/client.ts";
-import { MAX_BODY_BYTES, MESSAGE_TYPES, type Binding, type Message, type Page, type Status } from "../../src/coordination/protocol.ts";
+import { MAX_BODY_BYTES, MESSAGE_TYPES, type Binding } from "../../src/coordination/protocol.ts";
+import { ackToolResult, formatTeamToolResult, readMessageToolResult, readPageToolResult, sendToolResult, statusToolResult } from "../../src/coordination/tool-results.ts";
 
 interface ToolHost {
+    readonly automaticHeld: boolean;
+    readonly localDeliveryPaused: boolean;
     requireClient(roomId?: string): { client: TeamClient; binding: Binding };
-    result(text: string): { content: { type: "text"; text: string }[]; details: {} };
 }
 
 export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
@@ -19,7 +20,7 @@ export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
             const c = host.requireClient(params.roomId);
             if (params.summary !== undefined || params.blocker !== undefined) await c.client.call("work", { roomId: c.binding.roomId, ...(params.summary !== undefined ? { summary: params.summary } : {}), ...(params.blocker !== undefined ? { blocker: params.blocker } : {}) }, signal);
             const s = await c.client.call("status", { roomId: c.binding.roomId, ...(params.participantId ? { participantId: params.participantId } : {}) }, signal);
-            return host.result(statusText(s));
+            return formatTeamToolResult(statusToolResult(s, host.automaticHeld, host.localDeliveryPaused));
         },
     });
     pi.registerTool({
@@ -28,7 +29,7 @@ export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
         parameters: Type.Object({ roomId: Type.String(), idempotencyKey: Type.String({ minLength: 1, maxLength: 100 }), recipients: Type.Array(Type.String(), { minItems: 1, maxItems: 8 }), type: StringEnum(MESSAGE_TYPES), actionable: Type.Optional(Type.Boolean({ description: "Handoffs only: request continuation of an existing authorized assignment and allow an automatic wakeup. Not new scope or permission." })), body: Type.String({ minLength: 1, maxLength: MAX_BODY_BYTES }), subject: Type.Optional(Type.String({ maxLength: 200 })), threadId: Type.Optional(Type.String()), replyTo: Type.Optional(Type.String()), references: Type.Optional(Type.Array(Type.String({ maxLength: 1000 }), { maxItems: 8 })) }, { additionalProperties: false }),
         async execute(_id, params, signal) {
             const c = host.requireClient(params.roomId); const m = await c.client.call("send", params, signal);
-            return host.result(`STORED · idempotencyKey ${params.idempotencyKey}\n${messageText(m, false)}\nNo wait for a model reply. Unavailable recipients retain their mailbox; user can inspect /team review ${m.id}.`);
+            return formatTeamToolResult(sendToolResult(m, params.idempotencyKey));
         },
     });
     pi.registerTool({
@@ -37,12 +38,20 @@ export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
         parameters: Type.Object({ roomId: Type.String(), action: Type.Optional(StringEnum(["read", "ack"] as const)), messageId: Type.Optional(Type.String()), threadId: Type.Optional(Type.String()), cursor: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), history: Type.Optional(Type.Boolean({ description: "Include inactive/acknowledged inbox history; default shows pending/open/unacknowledged active items. Thread queries always include full history." })) }, { additionalProperties: false }),
         async execute(_id, params, signal) {
             const c = host.requireClient(params.roomId);
-            if (params.action === "ack") { if (!params.messageId) throw new Error("messageId required for acknowledgment."); await c.client.call("ack", { roomId: params.roomId, messageId: params.messageId }, signal); return host.result("Receipt explicitly acknowledged. This is not task completion or approval."); }
+            const hasPageOptions = params.threadId !== undefined || params.cursor !== undefined || params.limit !== undefined || params.history !== undefined;
+            if (params.messageId && hasPageOptions) throw new Error("messageId cannot be combined with threadId, cursor, limit, or history.");
+            if (params.action === "ack") {
+                if (!params.messageId) throw new Error("messageId required for acknowledgment.");
+                await c.client.call("ack", { roomId: c.binding.roomId, messageId: params.messageId }, signal);
+                return formatTeamToolResult(ackToolResult(c.binding.roomId, params.messageId));
+            }
             const { action: _action, ...query } = params;
             const value = query.messageId
-                ? await c.client.call("read", { roomId: query.roomId, messageId: query.messageId }, signal)
-                : await c.client.call("read", { roomId: query.roomId, ...(query.threadId ? { threadId: query.threadId } : {}), ...(query.cursor !== undefined ? { cursor: query.cursor } : {}), ...(query.limit !== undefined ? { limit: query.limit } : {}), ...(query.history !== undefined ? { history: query.history } : {}) }, signal);
-            return host.result("items" in value ? pageText(value) : messageText(value));
+                ? await c.client.call("read", { roomId: c.binding.roomId, messageId: query.messageId }, signal)
+                : await c.client.call("read", { roomId: c.binding.roomId, ...(query.threadId ? { threadId: query.threadId } : {}), ...(query.cursor !== undefined ? { cursor: query.cursor } : {}), ...(query.limit !== undefined ? { limit: query.limit } : {}), ...(query.history !== undefined ? { history: query.history } : {}) }, signal);
+            return formatTeamToolResult("items" in value
+                ? readPageToolResult(value, { roomId: c.binding.roomId, ...(query.threadId ? { threadId: query.threadId } : {}), ...(query.cursor !== undefined ? { cursor: query.cursor } : {}), ...(query.limit !== undefined ? { limit: query.limit } : {}), ...(query.history !== undefined ? { history: query.history } : {}) })
+                : readMessageToolResult(value));
         },
     });
 }

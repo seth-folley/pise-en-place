@@ -54,6 +54,13 @@ async function setup() {
     const app = fakeSession("app-session", file); await app.emit("session_start", { reason: "startup" });
     return { root, paths, broker, file, app };
 }
+function structuredResult(value: unknown): Record<string, unknown> {
+    const result = value as { content: Array<{ text?: string }>; details: unknown };
+    const parsed = JSON.parse(result.content[0]?.text ?? "");
+    expect(parsed).toEqual(result.details);
+    expect(parsed).toMatchObject({ schema: "team-tool-result/v1" });
+    return parsed as Record<string, unknown>;
+}
 
 describe("Pi extension lifecycle and manual-only boundaries", () => {
     it("factory/startup do not enroll, open sockets, or trigger model turns", async () => {
@@ -78,7 +85,9 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         app.setApproval(false); await app.command("join catalog --name app --role worker");
         expect(existsSync(paths.control)).toBe(false);
         app.setApproval(true); await app.command("join catalog --name app --role worker");
-        expect((await app.execute("team_status", {})).content[0]).toMatchObject({ text: expect.stringContaining("app (you)") });
+        expect(structuredResult(await app.execute("team_status", {}))).toMatchObject({
+            operation: "status", participants: [{ name: "app" }],
+        });
         expect(app.sendMessage).not.toHaveBeenCalled();
     });
     it("declined or headless enrollment never grants authority", async () => {
@@ -88,6 +97,38 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         s.app.context.mode = "print";
         await s.app.command("join catalog --name app --role worker");
         expect(s.app.notify).toHaveBeenLastCalledWith(expect.stringContaining("require interactive TUI"), "error");
+    });
+    it("returns structured status, send, read, and receipt-only acknowledgment results", async () => {
+        const s = await setup(); await s.app.command("join catalog --name app --role worker");
+        const backend = await controlCall(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
+        const status = structuredResult(await s.app.execute("team_status", {}));
+        expect(status).toMatchObject({ operation: "status", room: { id: backend.roomId }, selfParticipantId: expect.any(String) });
+        await s.app.command("pause local");
+        expect(structuredResult(await s.app.execute("team_status", { participantId: backend.participantId }))).toMatchObject({ conditions: ["paused"] });
+        await s.app.command("resume local");
+
+        const sendParams = { roomId: backend.roomId, idempotencyKey: "offline-question", recipients: [backend.participantId], type: "question", subject: "Null fields", body: "Can fields be null?" };
+        const sent = structuredResult(await s.app.execute("team_send", sendParams));
+        expect(sent).toMatchObject({
+            operation: "send", acceptance: "stored", conditions: ["waiting_offline"],
+            message: { threadId: expect.any(String), deliveries: [{ recipient: { id: backend.participantId }, state: "pending", presence: "disconnected", conditions: ["waiting_offline"] }] },
+        });
+        const retried = structuredResult(await s.app.execute("team_send", sendParams));
+        expect(retried).toMatchObject({ message: { id: (sent.message as { id: string }).id } });
+
+        const client = await TeamClient.connect(s.paths.socket, { roomId: backend.roomId, participantId: backend.participantId, sessionId: backend.sessionId, token: backend.token });
+        cleanups.push(() => client.close());
+        const appId = status.selfParticipantId as string;
+        s.app.setIdle(false);
+        const incoming = await client.call("send", { roomId: backend.roomId, idempotencyKey: "reply-needed", recipients: [appId], type: "question", subject: "Need input", body: "Please confirm." });
+        const page = structuredResult(await s.app.execute("team_read", { roomId: backend.roomId }));
+        expect(page).toMatchObject({ operation: "read", kind: "page", items: [{ id: incoming.id, preview: "Please confirm." }] });
+        const full = structuredResult(await s.app.execute("team_read", { roomId: backend.roomId, messageId: incoming.id }));
+        expect(full).toMatchObject({ operation: "read", kind: "message", message: { id: incoming.id, body: "Please confirm." } });
+        await expect(s.app.execute("team_read", { roomId: backend.roomId, messageId: incoming.id, threadId: incoming.thread_id })).rejects.toThrow(/cannot be combined/);
+        const ack = structuredResult(await s.app.execute("team_read", { roomId: backend.roomId, action: "ack", messageId: incoming.id }));
+        expect(ack).toMatchObject({ operation: "ack", acknowledgement: "receipt", taskComplete: false, approval: false });
+        expect(JSON.stringify([status, sent, page, full, ack])).not.toMatch(/token|sessionId|attemptId|generation|entryId|internal-delivery/);
     });
     it("joins, renders a bounded widget, reads without wakeups and manually inserts one message", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");
@@ -149,7 +190,7 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         await expect.poll(() => s.broker.store.db.prepare("SELECT connection_id FROM participants WHERE name='app'").get()?.connection_id).toBeNull();
         const reloaded = fakeSession("app-session", s.file, s.app.entries);
         await reloaded.emit("session_start", { reason: "reload" });
-        const status = await reloaded.execute("team_status", {}); expect(status.content[0]).toMatchObject({ text: expect.stringContaining("app (you)") });
+        expect(structuredResult(await reloaded.execute("team_status", {}))).toMatchObject({ operation: "status", participants: [{ name: "app" }] });
         await reloaded.emit("session_shutdown", { reason: "fork" });
         const forkFile = join(s.root, "fork.jsonl"); writeFileSync(forkFile, "");
         for (const reason of ["new", "resume", "fork", "startup"]) {
@@ -161,7 +202,9 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
     it("room-local pause/resume cannot start a model; unavailable sessions can detach", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");
         await s.app.command("pause local"); expect(s.broker.store.db.prepare("SELECT paused FROM participants WHERE name='app'").get()?.paused).toBe(1);
+        expect(structuredResult(await s.app.execute("team_status", {}))).toMatchObject({ conditions: ["paused"] });
         await s.app.command("resume local"); expect(s.broker.store.db.prepare("SELECT paused FROM participants WHERE name='app'").get()?.paused).toBe(0);
+        expect(structuredResult(await s.app.execute("team_status", {}))).toMatchObject({ conditions: [] });
         await s.broker.stop(); await new Promise((r) => setTimeout(r, 20));
         await s.app.command("status");
         expect(JSON.stringify(s.app.entries)).toContain("cached presence STALE");

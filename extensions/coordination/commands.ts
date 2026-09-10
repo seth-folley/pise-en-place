@@ -5,6 +5,12 @@ import { TeamError } from "../../src/coordination/protocol.ts";
 import { TEAM_HELP as HELP } from "./constants.ts";
 import { CoordinationRuntime, errorText } from "./runtime.ts";
 
+function notificationText(error: unknown): string {
+    return error instanceof TeamError && ["PAUSED", "UNCERTAIN"].includes(error.code)
+        ? `Team · ${error.code} — ${error.message}`
+        : `Team: ${errorText(error)}`;
+}
+
 export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRuntime): void {
     pi.registerCommand("team", {
         description: "Join an isolated team room with automatic peer communication; inspect, pause, or review messages",
@@ -131,7 +137,7 @@ export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRunti
                 }
                 throw new Error(HELP);
             } catch (error) {
-                commandCtx.ui.notify(`Team: ${errorText(error)}`, "error");
+                commandCtx.ui.notify(notificationText(error), "error");
                 if (error instanceof TeamError && error.code === "NAME_EXISTS") runtime.inspect("To recover an existing disconnected/left participant, explicitly use /team join <room> --name <name> --role <role> --rejoin. Another session's live identity cannot be taken over.");
             }
         },

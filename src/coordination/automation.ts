@@ -85,7 +85,7 @@ export class AutomaticDelivery {
             if (this.active?.submitted) await this.finish("unknown");
             else if (batch) await this.cancel(transport, batch).catch(() => {});
             if (!this.disposed) this.host.notify(this.held
-                ? `Automatic team delivery held because persisted session evidence could not be read. Fix session-file access, then run /team resume local. ${e instanceof Error ? e.message : String(e)}`
+                ? `Team · PAUSED (local) — Persisted session evidence could not be read. Fix session-file access, then run /team resume local. ${e instanceof Error ? e.message : String(e)}`
                 : `Automatic team delivery could not proceed: ${e instanceof Error ? e.message : String(e)}`);
         } finally { this.busy = false; if (batch && !this.disposed) { this.host.changed(); this.kick(); } }
     }
@@ -132,10 +132,10 @@ export class AutomaticDelivery {
             const transport = this.host.transport();
             if (!transport) throw new Error("Broker disconnected before automatic run receipt.");
             await transport.call("auto-finish", { roomId: this.host.binding.roomId, activationId: active.batch.id, outcome, entries });
-            if (outcome !== "complete") this.host.notify(`Automatic team run ${outcome}; local delivery paused. Inspect /team status, then /team resume local when ready.`);
+            if (outcome !== "complete") this.host.notify(`Team · UNCERTAIN · PAUSED — Automatic run ${outcome}. Inspect /team status, then /team resume local when ready.`);
         } catch (e) {
             this.held = true;
-            if (!this.disposed) this.host.notify(`Automatic team outcome uncertain; inspect/reconcile before resuming. ${e instanceof Error ? e.message : String(e)}`);
+            if (!this.disposed) this.host.notify(`Team · UNCERTAIN · PAUSED — Automatic outcome could not be reconciled. Inspect/reconcile before resuming. ${e instanceof Error ? e.message : String(e)}`);
         } finally {
             active.abortCleanup?.(); this.active = undefined; this.finishing = false;
             if (!this.disposed) this.host.changed();

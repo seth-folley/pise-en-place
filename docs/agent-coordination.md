@@ -99,6 +99,8 @@ There is no overdue deadline or notification grace-period configuration yet. Pre
 
 ## Agent tools
 
+Successful agent-tool calls return a minified, model-visible JSON envelope with `schema: "team-tool-result/v1"`; the same allowlisted envelope is retained in the tool result details. The envelope uses explicit room, participant, message and thread IDs and never includes credentials, session IDs, attempt IDs, generations, persisted entry IDs or internal delivery IDs. Durable delivery state remains separate from derived `conditions` (`waiting_offline`, `budget_blocked`, `paused`, `uncertain`). Results remain valid JSON within 40 KiB: unusually escape-heavy full-message text/references use labeled base64 UTF-8 encoding, oversized status rosters retain every participant ID while marking omitted work text, and oversized pages include bounded retry metadata rather than being cut mid-document. Human `/team` command output remains formatted text.
+
 ### `team_status`
 
 Read current enrollment, participant IDs, runtime and pending counts. Optional `roomId` verifies scope; optional `participantId` retrieves one participant's full work text instead of roster previews. `summary` and `blocker` update only the caller's own explicit text (empty string clears). Those updates are shared with the room. This tool is the starting point for discovering the room ID and recipients.
@@ -120,7 +122,7 @@ Read current enrollment, participant IDs, runtime and pending counts. Optional `
 }
 ```
 
-Returns **STORED**, message/thread IDs, sequence, each recipient's observed availability and delivery state. Success means the SQLite transaction committed, **not** that another model received/replied/understood it. Offline/left recipients keep durable mailboxes; the sender does not hold a tool open waiting for an answer.
+Returns `operation: "send"`, `acceptance: "stored"`, message/thread IDs, sequence, each recipient's observed availability and delivery state, and conditions proven by that response. Success means the SQLite transaction committed, **not** that another model received/replied/understood it. Offline/left recipients keep durable mailboxes and are labeled `waiting_offline` when their delivery/request is still pending; the sender does not hold a tool open waiting for an answer.
 
 Same `(room, sender, idempotencyKey)` and payload returns the original message. A different payload under the same key is a conflict. On timeout/disconnect, acceptance may be unknown: retry only the same key/payload or inspect history. The extension does not silently spool unsent messages offline.
 
@@ -140,7 +142,7 @@ Agents should ask once, continue independent work or report a blocker, answer co
 }
 ```
 
-Read one full message, or a page of summaries (160-character preview; no full bodies). The default inbox shows pending/uncertain deliveries, open requests, and unacknowledged active items rather than burying new work under old resolved messages. Use `history: true` (or `/team inbox --history`) for all inbox history; thread queries always preserve full history. Follow `nextCursor` for history and fetch specific message IDs for details. Output additionally caps at 40 KiB/1,800 lines and identifies retrieval options. Reading is an explicit tool result in model context, **not** proof of custom-message insertion or an automatic acknowledgment. `ack` acknowledges only the caller's addressed message; it is not completion or approval.
+Read one full message, or a page of summaries (160-character preview; no full bodies). Results distinguish `kind: "message"` from `kind: "page"`; pages echo the effective cursor, limit and history behavior and return `nextCursor`. The default inbox shows pending/uncertain deliveries, open requests, and unacknowledged active items rather than burying new work under old resolved messages. Use `history: true` (or `/team inbox --history`) for all inbox history; thread queries always preserve full history. Follow `nextCursor` for history and fetch specific message IDs for details. Output caps at 40 KiB. Escape-heavy full-message content may use labeled base64 UTF-8 encoding to preserve it completely; oversized pages return a valid truncated envelope with retry metadata. Reading is an explicit tool result in model context, **not** proof of custom-message insertion or an automatic acknowledgment. `ack` returns `acknowledgement: "receipt"`, `taskComplete: false` and `approval: false`; it acknowledges only the caller's addressed message.
 
 ## Human commands
 

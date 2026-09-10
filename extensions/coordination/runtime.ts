@@ -43,6 +43,7 @@ export class CoordinationRuntime {
     get status(): Status | undefined { return this._status; }
     get lastError(): string { return this._lastError; }
     get automaticHeld(): boolean { return this.automatic?.isHeld ?? false; }
+    get localDeliveryPaused(): boolean { return this.locallyPaused || this.automaticHeld; }
     current(context: ExtensionContext): boolean { return !!this.ctx && this.ctx.sessionManager.getSessionId() === context.sessionManager.getSessionId(); }
     private widget(): void { renderWidget(this.ctx, this._binding, this._status, !!this._client, this.automaticHeld); }
 
@@ -138,7 +139,6 @@ export class CoordinationRuntime {
         return { client: this._client, binding: this._binding };
     }
     inspect(text: string): void { this.pi.appendEntry(INSPECT, { text: bounded(text) }); }
-    result(text: string) { return { content: [{ type: "text" as const, text: bounded(text) }], details: {} }; }
     async confirm(context: ExtensionCommandContext, title: string, detail: string): Promise<boolean> {
         if (context.mode !== "tui") throw new Error("Human coordination controls currently require interactive TUI confirmation. Request remains pending; no permission granted.");
         const epoch = this.epoch;

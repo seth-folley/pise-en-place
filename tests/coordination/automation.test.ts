@@ -53,19 +53,19 @@ it("settlement without a started/completed agent run is unknown, not successful 
     await expect.poll(() => s.insert.mock.calls.length).toBe(1);
     await s.automatic.settled();
     expect(s.status().participants.find((p) => p.name === "b")?.paused).toBe(1);
-    expect(s.notify).toHaveBeenCalledWith(expect.stringContaining("unknown"));
+    expect(s.notify).toHaveBeenCalledWith(expect.stringMatching(/UNCERTAIN · PAUSED.*unknown/));
 });
 it("unknown sendMessage acceptance never retries a model automatically", async () => {
     const s = setup({ start: false, persist: false }); s.send(); s.automatic.kick();
     await expect.poll(() => s.status().participants.find((p) => p.name === "b")?.paused).toBe(1);
-    expect(s.insert).toHaveBeenCalledOnce(); expect(s.notify).toHaveBeenCalledWith(expect.stringContaining("unknown"));
+    expect(s.insert).toHaveBeenCalledOnce(); expect(s.notify).toHaveBeenCalledWith(expect.stringMatching(/UNCERTAIN · PAUSED.*unknown/));
     s.send(); s.automatic.kick(); await new Promise((r) => setTimeout(r, 40)); expect(s.insert).toHaveBeenCalledOnce();
 });
 it("exposes pre-dispatch evidence holds, avoids churn, and retries after explicit resume", async () => {
     const s = setup({ failBeforeInsert: true }); s.send(); s.automatic.kick();
     await expect.poll(() => s.notify.mock.calls.length).toBe(1);
     expect(s.automatic.isHeld).toBe(true);
-    expect(s.notify).toHaveBeenCalledWith(expect.stringMatching(/persisted session evidence.*\/team resume local/));
+    expect(s.notify).toHaveBeenCalledWith(expect.stringMatching(/PAUSED \(local\).*Persisted session evidence.*\/team resume local/));
     expect(s.insert).not.toHaveBeenCalled(); expect(s.status().automation.roomUsed).toBe(0);
     for (let i = 0; i < 5; i++) s.automatic.kick();
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -92,5 +92,5 @@ it("an already persisted retry never wakes again, and disk errors still report u
     await expect.poll(() => failed.insert.mock.calls.length).toBe(1);
     await failed.automatic.settled();
     expect(failed.status().participants.find((p) => p.name === "b")?.paused).toBe(1);
-    expect(failed.notify).toHaveBeenCalledWith(expect.stringContaining("unknown"));
+    expect(failed.notify).toHaveBeenCalledWith(expect.stringMatching(/UNCERTAIN · PAUSED.*unknown/));
 });
