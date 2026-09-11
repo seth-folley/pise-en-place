@@ -51,6 +51,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 - `/update-skills --check` lists available updates.
 - `/update-skills --interactive` lets the user choose updates, pins accepted refs, and syncs skills.
 - `/update-skills` syncs skills through the shared shell scripts.
+- `/improve-skill <name-or-absolute-path>` opens a current-worktree Supacode tab with independent read-only Pi, Codex, and Claude reviews of the current skill contents. Use `--focus` to append review criteria, `--prompt <file.md>` to replace the built-in prompt, or `--show-prompt` to preview the exact composed prompts. Reviews remain visible for manual comparison and create no review artifacts.
 
 ### Skill evaluation
 

@@ -44,6 +44,7 @@
       "./extensions/usage/index.ts",
       "./extensions/skills/read-ledger.ts",
       "./extensions/skills/update-agent-skills.ts",
+      "./extensions/skills/improve-skill/index.ts",
       "./extensions/ui/dracula-status-line.ts",
       "./extensions/ui/response-time.ts",
       "./extensions/ui/interactive-agent-questions.ts",

@@ -10,6 +10,7 @@ After changing or installing extensions, run Pi's built-in `/reload` command.
 | --- | --- |
 | [`/usage`](#usage) | Usage ledger reports, Codex subscription limits, session tags, and skill-read reports |
 | [`/update-skills`](#update-skills) | Check, select, and install agent skill updates |
+| [`/improve-skill`](#improve-skill) | Open independent read-only skill reviews in Pi, Codex, and Claude |
 | [`/skill-eval`](#skill-eval) | Validate, run, and review skill evaluations |
 | [`/subagents`](#subagents) | List retained child sessions created by the subagent tool |
 | [`/team`](#team) | Join and manage an isolated coordination room |
@@ -25,6 +26,31 @@ After changing or installing extensions, run Pi's built-in `/reload` command.
 | [`/response-time`](#response-time) | Toggle response-duration reporting |
 
 ## Usage and skills
+
+### `/improve-skill`
+
+```text
+/improve-skill <skill-name>
+/improve-skill </absolute/path/to/skill-directory>
+/improve-skill </absolute/path/to/skill/SKILL.md>
+/improve-skill <skill> --focus "additional review criteria"
+/improve-skill <skill> --prompt <path/to/prompt.md>
+/improve-skill <skill> --show-prompt
+```
+
+Opens a new tab in the current Supacode worktree with independent, read-only, one-shot reviews in three columns: Pi, Codex, then Claude. Results stay in their panes for manual comparison; the command does not edit the skill, persist review artifacts, or consolidate findings.
+
+`--focus` appends an `Additional review focus` section to the prompt sent identically to all three reviewers. Quote multi-word focus text. `--prompt` replaces the built-in prompt with the non-empty contents of a `.md` or `.markdown` file; its path may be absolute, relative to the current directory, or start with `~/`. `--focus` and `--prompt` may be combined.
+
+`--show-prompt` resolves the skill and opens a read-only preview of the exact three prompts that would be used, without launching reviewers. It may be combined with `--focus` and `--prompt` to inspect the fully composed prompts before launching a review.
+
+A bare name resolves the first readable `SKILL.md` in this order:
+
+1. `<repository>/skills/<name>/SKILL.md`
+2. `<repository>/.agents/skills/<name>/SKILL.md`
+3. `~/.agents/skills/<name>/SKILL.md`
+
+Skill path inputs must be absolute; a directory must contain a readable `SKILL.md`. Launching reviews requires interactive Pi running in Supacode, a Git worktree, and available `supacode`, `pi`, `codex`, and `claude` executables. The `--show-prompt` preview only requires interactive Pi and the Git worktree used to resolve the skill.
 
 ### `/usage`
 

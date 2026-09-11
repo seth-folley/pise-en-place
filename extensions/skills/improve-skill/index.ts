@@ -1,0 +1,175 @@
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey, Text } from "@earendil-works/pi-tui";
+import { parseImproveSkillArguments, readCustomPrompt } from "./arguments.ts";
+import { buildLaunchPlans, safeTabTitle } from "./launcher.ts";
+import { buildReviewPrompt, formatReviewPrompts, type Reviewer } from "./prompt.ts";
+import { resolveSkill } from "./resolver.ts";
+
+const controlTimeoutMs = 15_000;
+const requiredSupacodeEnvironment = [
+	"SUPACODE_WORKTREE_ID",
+	"SUPACODE_TAB_ID",
+	"SUPACODE_SURFACE_ID",
+	"SUPACODE_SOCKET_PATH",
+] as const;
+
+type CommandResult = { code: number; stdout: string; stderr: string; killed?: boolean };
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function output(result: CommandResult): string {
+	return [result.stderr, result.stdout].filter(Boolean).join("\n").trim();
+}
+
+function resourceID(result: CommandResult, action: string): string {
+	if (result.code !== 0) throw new Error(`${action} failed: ${output(result) || `exit ${result.code}`}`);
+	const id = result.stdout.trim().split(/\s+/)[0];
+	if (!id) throw new Error(`${action} did not return an ID.`);
+	return id;
+}
+
+async function showPromptPreview(ctx: ExtensionCommandContext, title: string, prompt: string) {
+	await ctx.ui.custom<void>((_tui, theme, _keybindings, done) => {
+		const heading = new Text(theme.fg("accent", theme.bold(title)), 1, 0);
+		const body = new Text(prompt, 1, 1);
+		const hint = new Text(theme.fg("dim", "Enter or Esc to close"), 1, 0);
+		return {
+			render: (width) => [...heading.render(width), ...body.render(width), ...hint.render(width)],
+			handleInput: (data) => {
+				if (matchesKey(data, Key.enter) || matchesKey(data, Key.escape)) done();
+			},
+			invalidate: () => {
+				heading.invalidate();
+				body.invalidate();
+				hint.invalidate();
+			},
+		};
+	});
+}
+
+export default function improveSkillExtension(pi: ExtensionAPI) {
+	pi.registerCommand("improve-skill", {
+		description: "Open independent read-only Pi, Codex, and Claude reviews for a skill",
+		handler: async (args, ctx) => {
+			if (ctx.mode !== "tui" || !ctx.hasUI) {
+				ctx.ui.notify("/improve-skill requires Pi's interactive TUI.", "error");
+				return;
+			}
+
+			let parsed: ReturnType<typeof parseImproveSkillArguments>;
+			try {
+				parsed = parseImproveSkillArguments(args);
+			} catch (error) {
+				ctx.ui.notify(errorMessage(error), "error");
+				return;
+			}
+
+			const run = async (command: string, commandArgs: string[], timeout = controlTimeoutMs) => {
+				const result = await pi.exec(command, commandArgs, { cwd: ctx.cwd, timeout });
+				return result as CommandResult;
+			};
+
+			let repositoryRoot: string;
+			try {
+				const gitResult = await run("git", ["rev-parse", "--show-toplevel"]);
+				if (gitResult.code !== 0) throw new Error(output(gitResult) || `exit ${gitResult.code}`);
+				repositoryRoot = gitResult.stdout.trim();
+				if (!repositoryRoot) throw new Error("empty repository root");
+			} catch (error) {
+				ctx.ui.notify(`Unable to find the Git repository root: ${errorMessage(error)}`, "error");
+				return;
+			}
+
+			let skill: Awaited<ReturnType<typeof resolveSkill>>;
+			try {
+				skill = await resolveSkill(parsed.skillArgument, repositoryRoot);
+			} catch (error) {
+				ctx.ui.notify(errorMessage(error), "error");
+				return;
+			}
+
+			let customPrompt: string | undefined;
+			let customPromptPath: string | undefined;
+			try {
+				if (parsed.promptPath) {
+					const loaded = await readCustomPrompt(parsed.promptPath, ctx.cwd);
+					customPrompt = loaded.content;
+					customPromptPath = loaded.path;
+				}
+			} catch (error) {
+				ctx.ui.notify(errorMessage(error), "error");
+				return;
+			}
+
+			const promptOptions = { customPrompt, focus: parsed.focus };
+			if (parsed.showPrompt) {
+				await showPromptPreview(ctx, `Review prompts for ${skill.name}`, formatReviewPrompts(skill, promptOptions));
+				return;
+			}
+
+			const missingEnvironment = requiredSupacodeEnvironment.filter((key) => !process.env[key]);
+			if (missingEnvironment.length > 0) {
+				ctx.ui.notify(`/improve-skill must run inside Supacode (missing ${missingEnvironment.join(", ")}).`, "error");
+				return;
+			}
+
+			const worktreeID = process.env.SUPACODE_WORKTREE_ID!;
+			try {
+				const [worktreeResult, ...executables] = await Promise.all([
+					run("supacode", ["worktree", "status", "-w", worktreeID]),
+					...(["supacode", "pi", "codex", "claude"] as const).map((command) => run(command, ["--version"])),
+				]);
+				if (worktreeResult.code !== 0) throw new Error(`Current Supacode worktree is unavailable: ${output(worktreeResult)}`);
+				for (const [index, result] of executables.entries()) {
+					if (result.code !== 0) throw new Error(`Required executable is unavailable: ${["supacode", "pi", "codex", "claude"][index]} (${output(result) || `exit ${result.code}`})`);
+				}
+			} catch (error) {
+				ctx.ui.notify(`Unable to start skill reviews: ${errorMessage(error)}`, "error");
+				return;
+			}
+
+			const prompts = Object.fromEntries(((["Pi", "Codex", "Claude"] as Reviewer[]).map((reviewer) => [
+				reviewer,
+				buildReviewPrompt(reviewer, skill, promptOptions),
+			]))) as Record<Reviewer, string>;
+			const plans = buildLaunchPlans(prompts, repositoryRoot, skill.directory);
+			ctx.ui.notify(`Starting independent Pi, Codex, and Claude reviews of ${skill.name}…`, "info");
+
+			let tabID: string | undefined;
+			let reviewerStarted = false;
+			try {
+				tabID = resourceID(await run("supacode", ["tab", "new", "-w", worktreeID, "--title", safeTabTitle(skill.name)]), "Creating review tab");
+				const codexSurfaceID = resourceID(await run("supacode", ["surface", "split", "-w", worktreeID, "-t", tabID, "-s", tabID, "-d", "vertical"]), "Creating Codex surface");
+				const claudeSurfaceID = resourceID(await run("supacode", ["surface", "split", "-w", worktreeID, "-t", tabID, "-s", tabID, "-d", "vertical"]), "Creating Claude surface");
+
+				const surfaceIDs = [tabID, codexSurfaceID, claudeSurfaceID];
+				for (const [index, plan] of plans.entries()) {
+					const launch = await run("supacode", ["surface", "focus", "-w", worktreeID, "-t", tabID, "-s", surfaceIDs[index], "-i", plan.command]);
+					if (launch.code !== 0) throw new Error(`Starting ${plan.reviewer} failed: ${output(launch) || `exit ${launch.code}`}`);
+					reviewerStarted = true;
+				}
+				const focus = await run("supacode", ["surface", "focus", "-w", worktreeID, "-t", tabID, "-s", tabID]);
+				if (focus.code !== 0) throw new Error(`Focusing Pi surface failed: ${output(focus) || `exit ${focus.code}`}`);
+			} catch (error) {
+				if (tabID && !reviewerStarted) {
+					try {
+						await run("supacode", ["tab", "close", "-w", worktreeID, "-t", tabID, "--background"]);
+					} catch {
+						// Preserve the original failure; a failed best-effort rollback is visible in Supacode.
+					}
+					ctx.ui.notify(`Unable to create skill review tab: ${errorMessage(error)}`, "error");
+				} else if (tabID) {
+					ctx.ui.notify(`Skill review tab may contain partial results: ${errorMessage(error)}`, "error");
+				} else {
+					ctx.ui.notify(`Unable to create skill review tab: ${errorMessage(error)}`, "error");
+				}
+				return;
+			}
+
+			const promptNote = customPromptPath ? ` Custom prompt: ${customPromptPath}.` : "";
+			ctx.ui.notify(`Opened three read-only reviews for ${skill.name}. Resolved: ${skill.directory}.${promptNote}`, "info");
+		},
+	});
+}
