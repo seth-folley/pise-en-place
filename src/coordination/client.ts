@@ -1,8 +1,55 @@
 import { createConnection, type Socket } from "node:net";
-import { encode, Frames, object, request, TeamError, type Params, type Response } from "./protocol.ts";
+import type { Activation } from "./automation-store.ts";
+import { encode, Frames, object, request, TeamError, type Credential, type Message, type MessageType, type Page, type Params, type Response, type Runtime, type Status } from "./protocol.ts";
 import { readControl, type TeamPaths } from "./paths.ts";
 
-export class TeamClient {
+type RecordingEvidence = { messageId: string; entryId: string };
+type StateResult = { state: string };
+type ReadParams = { roomId: string; messageId?: string; threadId?: string; cursor?: number; limit?: number; history?: boolean };
+export interface WorkerOperations {
+    status: { params: { roomId: string; participantId?: string }; result: Status };
+    send: { params: { roomId: string; idempotencyKey: string; recipients: string[]; type: MessageType; body: string; subject?: string; threadId?: string; replyTo?: string; references?: string[]; actionable?: boolean }; result: Message };
+    read: { params: ReadParams; result: Message | Page };
+    heartbeat: { params: { roomId: string; runtime: Runtime }; result: { leaseMs: number } };
+    work: { params: { roomId: string; summary?: string; blocker?: string }; result: { updated: true } };
+    ack: { params: { roomId: string; messageId: string }; result: { acknowledged: true; taskComplete: false } };
+    claim: { params: { roomId: string; messageId: string }; result: Message };
+    queue: { params: { roomId: string; messageId: string; attemptId: string }; result: StateResult };
+    receipt: { params: { roomId: string; messageId: string; attemptId: string; entryId: string }; result: StateResult };
+    reconcile: { params: { roomId: string; messageId: string; attemptId: string; entryId: string }; result: StateResult };
+    uncertain: { params: { roomId: string; messageId: string; attemptId: string }; result: StateResult };
+    "auto-reserve": { params: { roomId: string }; result: Activation | null };
+    "auto-dispatch": { params: { roomId: string; activationId: string }; result: StateResult };
+    "auto-cancel": { params: { roomId: string; activationId: string }; result: StateResult };
+    "auto-reconcile": { params: { roomId: string; activationId: string; entries: RecordingEvidence[] }; result: StateResult };
+    "auto-finish": { params: { roomId: string; activationId: string; outcome: "complete" | "aborted" | "error" | "unknown"; entries: RecordingEvidence[] }; result: StateResult };
+}
+interface Health { protocol: number; schema: number; activationPolicy?: number; status: string }
+export interface ControlOperations {
+    join: { params: { room: string; name: string; role: string; sessionId: string; rejoin?: boolean }; result: Credential };
+    restore: { params: { roomId: string; participantId: string; sessionId: string }; result: Credential };
+    health: { params: Record<string, never>; result: Health };
+    stop: { params: Record<string, never>; result: Health };
+    status: WorkerOperations["status"];
+    leave: { params: { roomId: string; participantId: string }; result: { left: true } };
+    pause: { params: { roomId: string; participantId?: string; paused: boolean }; result: { paused: boolean } };
+    retry: { params: { roomId: string; participantId: string; messageId: string }; result: StateResult };
+    resolve: { params: { roomId: string; threadId: string }; result: { resolved: true } };
+    cancel: { params: { roomId: string; messageId: string; participantId: string }; result: { cancelled: true } };
+    redirect: { params: { roomId: string; messageId: string; participantId: string; recipientId: string }; result: unknown };
+    answer: { params: { roomId: string; messageId: string; participantId: string; body: string; idempotencyKey: string }; result: unknown };
+}
+export type OperationParams<Operations, Name extends keyof Operations> = Operations[Name] extends { params: infer Value } ? Value : never;
+export type OperationResult<Operations, Name extends keyof Operations> = Operations[Name] extends { result: infer Value } ? Value : never;
+type CallResult<Operations, Name extends keyof Operations, Parameters> = Name extends "read"
+    ? Parameters extends { messageId: string } ? Message : Page
+    : OperationResult<Operations, Name>;
+export type WorkerHello = { roomId: string; participantId: string; sessionId: string; token: string };
+export interface OperationCaller<Operations> {
+    call<Name extends keyof Operations & string, Parameters extends OperationParams<Operations, Name>>(op: Name, params: Parameters, signal?: AbortSignal): Promise<CallResult<Operations, Name, Parameters>>;
+}
+
+export class TeamClient<Operations = WorkerOperations> implements OperationCaller<Operations> {
     private pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void; cleanup(): void }>();
     private closed = false;
     onChanged?: (room: string) => void;
@@ -42,7 +89,14 @@ export class TeamClient {
         for (const item of this.pending.values()) { item.cleanup(); item.reject(new TeamError("UNKNOWN", message)); }
         this.pending.clear();
     }
-    static async connect(socketPath: string, hello: Params, timeoutMs = 3000, signal?: AbortSignal): Promise<TeamClient> {
+    static connect(socketPath: string, hello: WorkerHello, timeoutMs = 3000, signal?: AbortSignal): Promise<TeamClient<WorkerOperations>> {
+        return TeamClient.connectAs<WorkerOperations>(socketPath, hello, timeoutMs, signal);
+    }
+    /** Internal host connection; never register this credential-bearing surface as an agent tool. */
+    static connectControl(socketPath: string, control: string, timeoutMs = 3000): Promise<TeamClient<ControlOperations>> {
+        return TeamClient.connectAs<ControlOperations>(socketPath, { control }, timeoutMs);
+    }
+    private static async connectAs<Ops>(socketPath: string, hello: Params, timeoutMs: number, signal?: AbortSignal): Promise<TeamClient<Ops>> {
         if (signal?.aborted) throw new TeamError("ABORTED", "Connection cancelled before opening.");
         const socket = createConnection({ path: socketPath, signal });
         await new Promise<void>((resolve, reject) => {
@@ -50,11 +104,15 @@ export class TeamClient {
             socket.once("error", (error) => { clearTimeout(timer); reject(Object.assign(new TeamError("UNAVAILABLE", `Broker unavailable (${(error as NodeJS.ErrnoException).code ?? "connection error"}).`), { cause: error })); });
             socket.once("connect", () => { clearTimeout(timer); resolve(); });
         });
-        const client = new TeamClient(socket, timeoutMs);
-        try { await client.call("hello", hello); return client; }
+        const client = new TeamClient<Ops>(socket, timeoutMs);
+        try { await client.rawCall("hello", hello); return client; }
         catch (error) { await client.close(); throw error; }
     }
-    call<T = unknown>(op: string, params: Params, signal?: AbortSignal): Promise<T> {
+    call<Name extends keyof Operations & string, Parameters extends OperationParams<Operations, Name>>(op: Name, params: Parameters, signal?: AbortSignal): Promise<CallResult<Operations, Name, Parameters>>;
+    call(op: string, params: unknown, signal?: AbortSignal): Promise<unknown> {
+        return this.rawCall(op, params as Params, signal);
+    }
+    private rawCall<T = unknown>(op: string, params: Params, signal?: AbortSignal): Promise<T> {
         if (signal?.aborted) return Promise.reject(new TeamError("ABORTED", "Cancelled before request was sent."));
         if (this.closed || this.socket.destroyed) return Promise.reject(new TeamError("UNAVAILABLE", "Broker is disconnected."));
         const req = request(op, params);
@@ -79,8 +137,8 @@ export class TeamClient {
         return new Promise((resolve) => { this.socket.once("close", resolve); this.socket.destroy(); });
     }
 }
-export async function controlCall<T = unknown>(paths: TeamPaths, op: string, params: Params): Promise<T> {
+export async function controlCall<Name extends keyof ControlOperations & string>(paths: TeamPaths, op: Name, params: OperationParams<ControlOperations, Name>): Promise<OperationResult<ControlOperations, Name>> {
     const control = await readControl(paths);
-    const client = await TeamClient.connect(paths.socket, { control });
-    try { return await client.call<T>(op, params); } finally { await client.close(); }
+    const client = await TeamClient.connectControl(paths.socket, control);
+    try { return await client.call(op, params) as OperationResult<ControlOperations, Name>; } finally { await client.close(); }
 }

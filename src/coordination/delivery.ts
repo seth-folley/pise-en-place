@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import { fail, safeText, type Binding, type Delivery, type Message, type Params } from "./protocol.ts";
+import type { OperationCaller, WorkerOperations } from "./client.ts";
+import { fail, safeText, type Binding, type Delivery, type Message } from "./protocol.ts";
 
 export const PEER_MESSAGE_TYPE = "team-peer-v1";
 export const PEER_BATCH_TYPE = "team-peer-batch-v1";
@@ -11,7 +12,7 @@ export interface DeliveryAdapter {
     insert(content: string, marker: Marker): void;
     persistedEntry(messageId: string): Promise<string | undefined>;
 }
-export interface DeliveryTransport { call<T>(op: string, params: Params): Promise<T> }
+export type DeliveryTransport = OperationCaller<WorkerOperations>;
 export function peerContent(message: Message, binding: Binding): string {
     const own = message.deliveries.find((d) => d.recipient_id === binding.participantId);
     return safeText([
@@ -30,7 +31,7 @@ export function peerContent(message: Message, binding: Binding): string {
 export async function deliverOne(transport: DeliveryTransport, adapter: DeliveryAdapter, messageId: string): Promise<string> {
     if (!adapter.isReady()) fail("BUSY", "Delivery requires this session to be idle and unpaused. Finish/abort current work or resume, then deliver explicitly.");
     const roomId = adapter.binding.roomId;
-    const message = await transport.call<Message>("claim", { roomId, messageId });
+    const message = await transport.call("claim", { roomId, messageId });
     const delivery = message.deliveries.find((d) => d.recipient_id === adapter.binding.participantId)!;
     const marker: Marker = { roomId, participantId: adapter.binding.participantId, sessionId: adapter.binding.sessionId, messageId, attemptId: delivery.attempt_id! };
     const params = { roomId, messageId, attemptId: marker.attemptId };

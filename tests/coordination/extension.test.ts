@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from "node:util";
 import { createSubagentWidget } from "../../extensions/orchestration/subagent/widget.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, type Component } from "@earendil-works/pi-tui";
 import coordination from "../../extensions/coordination/index.ts";
 import { startBroker } from "../../src/coordination/broker.ts";
 import { TeamClient, controlCall } from "../../src/coordination/client.ts";
@@ -19,7 +19,10 @@ function fakeSession(sessionId: string, sessionFile: string, entries: Entry[] = 
     const events = new Map<string, Listener>();
     const tools = new Map<string, ToolDefinition>();
     let command: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+    let commandCompletions: ((prefix: string) => unknown) | undefined;
     let idle = true, approval = true;
+    const customPlans: Array<string[] | "hold"> = [];
+    let activeCustom: Component | undefined;
     const sendMessage = vi.fn((message: { customType: string; content: string; details: unknown }, _options: unknown) => {
         const entry = { type: "custom_message", id: `entry-${entries.length}`, ...message };
         entries.push(entry); appendFileSync(sessionFile, JSON.stringify(entry) + "\n");
@@ -29,22 +32,36 @@ function fakeSession(sessionId: string, sessionFile: string, entries: Entry[] = 
         entries.push(entry); appendFileSync(sessionFile, JSON.stringify(entry) + "\n");
     });
     const notify = vi.fn(); const setWidget = vi.fn();
+    const custom = vi.fn(async (factory: Function) => new Promise<unknown>((resolve) => {
+        let closed = false;
+        const done = (value: unknown) => { if (!closed) { closed = true; activeCustom = undefined; resolve(value); } };
+        const theme = { fg: (_key: string, text: string) => text, bold: (text: string) => text };
+        activeCustom = factory({ requestRender: vi.fn() }, theme, {}, done);
+        const plan = customPlans.shift() ?? ["\x1b"];
+        if (plan !== "hold") for (const key of plan) activeCustom?.handleInput?.(key);
+    }));
     const context = {
         mode: "tui", hasUI: true, isIdle: () => idle,
         sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries },
-        ui: { setWidget, notify, confirm: async () => approval, select: async () => undefined, editor: async () => undefined },
+        ui: { setWidget, notify, custom, confirm: async () => approval, select: async () => undefined, editor: async () => undefined },
     } as unknown as ExtensionCommandContext;
     const pi = {
         on(name: string, handler: Listener) { events.set(name, handler); },
         registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
-        registerCommand(_name: string, definition: { handler: typeof command }) { command = definition.handler; },
+        registerCommand(_name: string, definition: { handler: typeof command; getArgumentCompletions?: (prefix: string) => unknown }) { command = definition.handler; commandCompletions = definition.getArgumentCompletions; },
         registerEntryRenderer() {}, registerMessageRenderer() {}, sendMessage, appendEntry,
     } as unknown as ExtensionAPI;
     coordination(pi);
     const emit = async (name: string, event: Record<string, unknown> = {}) => events.get(name)?.(event, context);
     cleanups.push(() => emit("session_shutdown", { reason: "quit" }));
     const execute = (name: string, params: Record<string, unknown>) => tools.get(name)!.execute("call-id", params, undefined, undefined, context);
-    return { context, emit, entries, sendMessage, notify, setWidget, execute, command: (args: string) => command(args, context), setIdle(v: boolean) { idle = v; }, setApproval(v: boolean) { approval = v; } };
+    return {
+        context, emit, entries, tools, sendMessage, notify, setWidget, custom, execute,
+        command: (args: string) => command(args, context), completions: (prefix: string) => commandCompletions?.(prefix),
+        setIdle(v: boolean) { idle = v; }, setApproval(v: boolean) { approval = v; },
+        planCustom(...plans: Array<string[] | "hold">) { customPlans.push(...plans); },
+        customComponent: () => activeCustom,
+    };
 }
 async function setup() {
     const root = mkdtempSync("/tmp/pi-team-ext-"); cleanups.push(() => rmSync(root, { recursive: true, force: true }));
@@ -54,6 +71,13 @@ async function setup() {
     const app = fakeSession("app-session", file); await app.emit("session_start", { reason: "startup" });
     return { root, paths, broker, file, app };
 }
+function structuredResult(value: unknown): Record<string, unknown> {
+    const result = value as { content: Array<{ text?: string }>; details: unknown };
+    const parsed = JSON.parse(result.content[0]?.text ?? "");
+    expect(parsed).toEqual(result.details);
+    expect(parsed).toMatchObject({ schema: "team-tool-result/v1" });
+    return parsed as Record<string, unknown>;
+}
 
 describe("Pi extension lifecycle and manual-only boundaries", () => {
     it("factory/startup do not enroll, open sockets, or trigger model turns", async () => {
@@ -62,6 +86,15 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         expect(s.broker.store.db.prepare("SELECT count(*) n FROM participants").get()?.n).toBe(0);
         await expect(s.app.execute("team_status", {})).rejects.toThrow(/Not enrolled/);
         await s.app.command("help"); expect(s.app.entries.length).toBe(1); // TUI-only inspection, not model input.
+    });
+    it("provides cache-only full-tail command completions", async () => {
+        const s = await setup();
+        expect(s.app.completions("")).toEqual(expect.arrayContaining([expect.objectContaining({ value: "join" })]));
+        await s.app.command("join catalog --name app --role worker");
+        expect(s.app.completions("pause ")).toEqual(expect.arrayContaining([expect.objectContaining({ value: "pause local" })]));
+        s.app.context.mode = "print";
+        await s.app.command("dashboard");
+        expect(s.app.notify).toHaveBeenLastCalledWith(expect.stringContaining("Dashboard currently requires interactive TUI"), "error");
     });
     it("/team join works from a fresh directory without a prestarted broker or control key", async () => {
         const root = mkdtempSync("/tmp/pi-team-cold-");
@@ -78,7 +111,9 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         app.setApproval(false); await app.command("join catalog --name app --role worker");
         expect(existsSync(paths.control)).toBe(false);
         app.setApproval(true); await app.command("join catalog --name app --role worker");
-        expect((await app.execute("team_status", {})).content[0]).toMatchObject({ text: expect.stringContaining("app (you)") });
+        expect(structuredResult(await app.execute("team_status", {}))).toMatchObject({
+            operation: "status", participants: [{ name: "app" }],
+        });
         expect(app.sendMessage).not.toHaveBeenCalled();
     });
     it("declined or headless enrollment never grants authority", async () => {
@@ -89,12 +124,44 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         await s.app.command("join catalog --name app --role worker");
         expect(s.app.notify).toHaveBeenLastCalledWith(expect.stringContaining("require interactive TUI"), "error");
     });
+    it("returns structured status, send, read, and receipt-only acknowledgment results", async () => {
+        const s = await setup(); await s.app.command("join catalog --name app --role worker");
+        const backend = await controlCall(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
+        const status = structuredResult(await s.app.execute("team_status", {}));
+        expect(status).toMatchObject({ operation: "status", room: { id: backend.roomId }, selfParticipantId: expect.any(String) });
+        await s.app.command("pause local");
+        expect(structuredResult(await s.app.execute("team_status", { participantId: backend.participantId }))).toMatchObject({ conditions: ["paused"] });
+        await s.app.command("resume local");
+
+        const sendParams = { roomId: backend.roomId, idempotencyKey: "offline-question", recipients: [backend.participantId], type: "question", subject: "Null fields", body: "Can fields be null?" };
+        const sent = structuredResult(await s.app.execute("team_send", sendParams));
+        expect(sent).toMatchObject({
+            operation: "send", acceptance: "stored", conditions: ["waiting_offline"],
+            message: { threadId: expect.any(String), deliveries: [{ recipient: { id: backend.participantId }, state: "pending", presence: "disconnected", conditions: ["waiting_offline"] }] },
+        });
+        const retried = structuredResult(await s.app.execute("team_send", sendParams));
+        expect(retried).toMatchObject({ message: { id: (sent.message as { id: string }).id } });
+
+        const client = await TeamClient.connect(s.paths.socket, { roomId: backend.roomId, participantId: backend.participantId, sessionId: backend.sessionId, token: backend.token });
+        cleanups.push(() => client.close());
+        const appId = status.selfParticipantId as string;
+        s.app.setIdle(false);
+        const incoming = await client.call("send", { roomId: backend.roomId, idempotencyKey: "reply-needed", recipients: [appId], type: "question", subject: "Need input", body: "Please confirm." });
+        const page = structuredResult(await s.app.execute("team_read", { roomId: backend.roomId }));
+        expect(page).toMatchObject({ operation: "read", kind: "page", items: [{ id: incoming.id, preview: "Please confirm." }] });
+        const full = structuredResult(await s.app.execute("team_read", { roomId: backend.roomId, messageId: incoming.id }));
+        expect(full).toMatchObject({ operation: "read", kind: "message", message: { id: incoming.id, body: "Please confirm." } });
+        await expect(s.app.execute("team_read", { roomId: backend.roomId, messageId: incoming.id, threadId: incoming.thread_id })).rejects.toThrow(/cannot be combined/);
+        const ack = structuredResult(await s.app.execute("team_read", { roomId: backend.roomId, action: "ack", messageId: incoming.id }));
+        expect(ack).toMatchObject({ operation: "ack", acknowledgement: "receipt", taskComplete: false, approval: false });
+        expect(JSON.stringify([status, sent, page, full, ack])).not.toMatch(/token|sessionId|attemptId|generation|entryId|internal-delivery/);
+    });
     it("joins, renders a bounded widget, reads without wakeups and manually inserts one message", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");
-        const b = await controlCall<Credential>(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
+        const b = await controlCall(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
         const client = await TeamClient.connect(s.paths.socket, { roomId: b.roomId, participantId: b.participantId, sessionId: b.sessionId, token: b.token }); cleanups.push(() => client.close());
-        const status = await client.call<Status>("status", { roomId: b.roomId }); const app = status.participants.find((p) => p.name === "app")!;
-        const m = await client.call<Message>("send", { roomId: b.roomId, idempotencyKey: "q", recipients: [app.id], type: "question", subject: "Null fields", body: "Can fields be null?" });
+        const status = await client.call("status", { roomId: b.roomId }); const app = status.participants.find((p) => p.name === "app")!;
+        const m = await client.call("send", { roomId: b.roomId, idempotencyKey: "q", recipients: [app.id], type: "question", subject: "Null fields", body: "Can fields be null?" });
         await s.app.command("inbox"); await s.app.command(`read ${m.id}`);
         expect(s.app.sendMessage).not.toHaveBeenCalled();
         s.app.setIdle(false); await s.app.command(`deliver ${m.id}`);
@@ -103,7 +170,7 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         s.app.setIdle(true); await s.app.command(`deliver ${m.id}`);
         expect(s.app.sendMessage).toHaveBeenCalledOnce();
         expect(s.app.sendMessage.mock.calls[0][1]).toEqual({ deliverAs: "followUp", triggerTurn: false });
-        const saved = await client.call<Message>("read", { roomId: b.roomId, messageId: m.id }); expect(saved.deliveries[0].state).toBe("recorded");
+        const saved = await client.call("read", { roomId: b.roomId, messageId: m.id }); expect(saved.deliveries[0].state).toBe("recorded");
         const factory = [...s.app.setWidget.mock.calls].reverse().find((args) => typeof args[1] === "function")![1];
         for (const color of ["dark", "light"]) {
             const theme = {
@@ -124,14 +191,16 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
                 }
             }
         }
-        // Membership entries and status never persist credentials.
+        // Membership entries, status, and agent-facing schemas never expose control credentials.
         expect(JSON.stringify(s.app.entries)).not.toContain('"token"');
+        const schemas = JSON.stringify([...s.app.tools.values()].map((tool) => tool.parameters));
+        expect(schemas).not.toMatch(/token|control|credential/i);
     });
     it("automatic delivery waits for all nested user prompts to close", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");
-        const b = await controlCall<Credential>(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
+        const b = await controlCall(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
         const client = await TeamClient.connect(s.paths.socket, { roomId: b.roomId, participantId: b.participantId, sessionId: b.sessionId, token: b.token }); cleanups.push(() => client.close());
-        const status = await client.call<Status>("status", { roomId: b.roomId });
+        const status = await client.call("status", { roomId: b.roomId });
         await s.app.emit("ui_prompt_start"); await s.app.emit("ui_prompt_start");
         await client.call("send", { roomId: b.roomId, idempotencyKey: "nested-ui", recipients: [status.participants.find((p) => p.name === "app")!.id], type: "question", subject: "UI", body: "Need input" });
         await s.app.emit("ui_prompt_end");
@@ -140,6 +209,46 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         await expect.poll(() => s.app.sendMessage.mock.calls.length).toBe(1);
         expect(s.app.sendMessage.mock.calls[0][1]).toEqual({ deliverAs: "followUp", triggerTurn: true });
     });
+    it("disposes the dashboard overlay before opening an existing confirmation", async () => {
+        const s = await setup(); await s.app.command("join catalog --name app --role worker");
+        s.app.planCustom(["\x1b[B", "\x1b[B", "\x1b[B", "\x1b[B", "\r"], ["\x1b"]);
+        const confirm = vi.fn(async () => {
+            expect(s.app.customComponent()).toBeUndefined();
+            return true;
+        });
+        s.app.context.ui.confirm = confirm;
+        await s.app.command("dashboard");
+        expect(confirm).toHaveBeenCalledOnce();
+        expect(s.broker.store.db.prepare("SELECT paused FROM participants WHERE name='app'").get()?.paused).toBe(1);
+    });
+    it("holds automatic delivery until the complete dashboard flow closes", async () => {
+        const s = await setup(); await s.app.command("join catalog --name app --role worker");
+        const b = await controlCall(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
+        const client = await TeamClient.connect(s.paths.socket, { roomId: b.roomId, participantId: b.participantId, sessionId: b.sessionId, token: b.token }); cleanups.push(() => client.close());
+        const teamStatus = await client.call("status", { roomId: b.roomId });
+        const appId = teamStatus.participants.find((participant) => participant.name === "app")!.id;
+        s.app.planCustom("hold");
+        const dashboard = s.app.command("dashboard");
+        await expect.poll(() => s.app.customComponent()).toBeTruthy();
+        await client.call("send", { roomId: b.roomId, idempotencyKey: "during-dashboard", recipients: [appId], type: "question", subject: "Wait", body: "Do not wake yet" });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(s.app.sendMessage).not.toHaveBeenCalled();
+        s.app.customComponent()!.handleInput?.("\x1b");
+        await dashboard;
+        await expect.poll(() => s.app.sendMessage.mock.calls.length).toBe(1);
+        expect(s.app.sendMessage.mock.calls[0][1]).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    });
+    it("stops an open dashboard after session runtime replacement", async () => {
+        const s = await setup(); await s.app.command("join catalog --name app --role worker");
+        s.app.planCustom("hold");
+        const dashboard = s.app.command("dashboard");
+        await expect.poll(() => s.app.customComponent()).toBeTruthy();
+        await s.app.emit("session_shutdown", { reason: "new" });
+        s.app.customComponent()!.handleInput?.("\x1b");
+        await dashboard;
+        expect(s.app.completions("")).toEqual(expect.arrayContaining([expect.objectContaining({ value: "join" })]));
+        expect(s.app.sendMessage).not.toHaveBeenCalled();
+    });
     it("reload restores the same binding and session replacement never inherits enrollment", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");
         await s.app.emit("session_shutdown", { reason: "reload" });
@@ -147,7 +256,7 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         await expect.poll(() => s.broker.store.db.prepare("SELECT connection_id FROM participants WHERE name='app'").get()?.connection_id).toBeNull();
         const reloaded = fakeSession("app-session", s.file, s.app.entries);
         await reloaded.emit("session_start", { reason: "reload" });
-        const status = await reloaded.execute("team_status", {}); expect(status.content[0]).toMatchObject({ text: expect.stringContaining("app (you)") });
+        expect(structuredResult(await reloaded.execute("team_status", {}))).toMatchObject({ operation: "status", participants: [{ name: "app" }] });
         await reloaded.emit("session_shutdown", { reason: "fork" });
         const forkFile = join(s.root, "fork.jsonl"); writeFileSync(forkFile, "");
         for (const reason of ["new", "resume", "fork", "startup"]) {
@@ -159,7 +268,9 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
     it("room-local pause/resume cannot start a model; unavailable sessions can detach", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");
         await s.app.command("pause local"); expect(s.broker.store.db.prepare("SELECT paused FROM participants WHERE name='app'").get()?.paused).toBe(1);
+        expect(structuredResult(await s.app.execute("team_status", {}))).toMatchObject({ conditions: ["paused"] });
         await s.app.command("resume local"); expect(s.broker.store.db.prepare("SELECT paused FROM participants WHERE name='app'").get()?.paused).toBe(0);
+        expect(structuredResult(await s.app.execute("team_status", {}))).toMatchObject({ conditions: [] });
         await s.broker.stop(); await new Promise((r) => setTimeout(r, 20));
         await s.app.command("status");
         expect(JSON.stringify(s.app.entries)).toContain("cached presence STALE");

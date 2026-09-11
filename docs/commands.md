@@ -200,6 +200,7 @@ Lists child sessions retained by the package's `subagent` tool for the current p
 /team join <room> --name <name> [--role <role>] [--rejoin]
 /team leave
 /team status [joined-room] [participant-id]
+/team dashboard
 /team inbox [cursor] [--history]
 /team thread <thread-id> [cursor]
 /team read <message-id>
@@ -217,6 +218,8 @@ Lists child sessions retained by the package's `subagent` tool for the current p
 - `join` starts or reuses the local broker, confirms enrollment, and stores the binding in the Pi session. The role defaults to `worker`. `--rejoin` recovers the mailbox for an existing disconnected/left identity; it cannot take over a live identity.
 - `leave` stops delivery to this session but retains broker history and pending messages for an explicit rejoin.
 - `status` shows roster, presence, current work/blockers, requests, and attention counts. To request a participant's full work text, supply the joined room name/ID followed by the participant ID.
+- `dashboard` opens a centered interactive TUI overview. It loads status and the active inbox once, refreshes explicitly with `r` and after actions or view changes, supports active/history paging and scrollable message detail, and reuses existing confirmation/review behavior. Opening or inspecting it does not acknowledge, deliver, or run an agent.
+- Argument completion is local, bounded session-memory metadata only: it suggests known current-room, participant, message, and thread IDs but never discovers rooms or queries the broker while typing.
 - `inbox` shows active items by default; `--history` includes inactive and acknowledged history. `thread` pages one discussion. `read` retrieves one full message without delivering it to the agent.
 
 #### Delivery and recovery

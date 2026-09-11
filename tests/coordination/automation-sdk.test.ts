@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream, type AssistantMessage, type ToolCall } from "@earendil-works/pi-ai";
@@ -33,7 +34,7 @@ async function setup() {
         const entry = sm.getEntries().find((e) => e.type === "custom" && e.customType === "team-binding-v1");
         expect(entry?.type, errors.join("\n")).toBe("custom");
         const binding = (entry as { data: { binding: Binding } }).data.binding;
-        return { session, binding };
+        return { session, binding, sessionManager: sm };
     }
     const app = await make("app"), backend = await make("backend");
     const calls = { app: 0, backend: 0 };
@@ -69,7 +70,7 @@ async function setup() {
         } } satisfies ToolCall], "toolUse");
         return response([{ type: "text", text: text.includes("null means unknown") ? "I will use null in my existing implementation." : "Continuing independent work." }]);
     });
-    const status = () => controlCall<Status>(paths, "status", { roomId: app.binding.roomId });
+    const status = () => controlCall(paths, "status", { roomId: app.binding.roomId });
     return { app, backend, calls, errors, status, setModel, response, reply };
 }
 it("two real Pi SDK agent loops exchange a question/reply and wake the requester without human delivery", async () => {
@@ -81,6 +82,37 @@ it("two real Pi SDK agent loops exchange a question/reply and wake the requester
     expect((await s.status()).automation.roomUsed).toBe(2);
     const count = { ...s.calls }; await new Promise((r) => setTimeout(r, 600)); expect(s.calls).toEqual(count);
 }, 30_000);
+it("reconciles a mixed persisted batch before waking only the remaining SDK work", async () => {
+    const s = await setup();
+    await s.backend.session.prompt("/team pause local");
+    await s.app.session.prompt("Ask backend first persisted question");
+    await s.app.session.prompt("Ask backend second pending question");
+
+    const db = new DatabaseSync(teamPaths().database, { readOnly: true });
+    const messages = db.prepare("SELECT id FROM messages WHERE sender_id=? ORDER BY ordinal DESC LIMIT 2").all(s.app.binding.participantId) as { id: string }[];
+    db.close();
+    expect(messages).toHaveLength(2);
+    const persistedId = messages[1]!.id;
+    s.backend.sessionManager.appendCustomMessageEntry("team-peer-batch-v1", "already persisted", true, {
+        activationId: "prior", messages: [{ roomId: s.backend.binding.roomId, participantId: s.backend.binding.participantId, sessionId: s.backend.binding.sessionId, messageId: persistedId, attemptId: "prior" }],
+    });
+
+    s.setModel(s.backend.session, "backend", () => s.response([{ type: "text", text: "Processed remaining request." }]));
+    const calls = s.calls.backend;
+    await s.backend.session.prompt("/team resume local");
+    await expect.poll(() => s.calls.backend, { timeout: 10_000 }).toBe(calls + 1);
+    await expect.poll(() => {
+        const check = new DatabaseSync(teamPaths().database, { readOnly: true });
+        const states = check.prepare("SELECT m.id,d.state FROM messages m JOIN deliveries d ON d.message_id=m.id WHERE d.recipient_id=? AND m.id IN (?,?) ORDER BY m.ordinal").all(s.backend.binding.participantId, messages[0]!.id, messages[1]!.id);
+        check.close();
+        return states;
+    }, { timeout: 5000 }).toEqual([{ id: persistedId, state: "recorded" }, { id: messages[0]!.id, state: "recorded" }]);
+    const status = await s.status();
+    expect(status.automation.roomUsed).toBe(1);
+    expect(status.participants.find((participant) => participant.id === s.backend.binding.participantId)?.paused).toBe(0);
+    expect(s.errors).toEqual([]);
+}, 30_000);
+
 it("busy SDK recipients are not interrupted; their queued question starts only after settlement", async () => {
     const s = await setup();
     let release!: () => void;

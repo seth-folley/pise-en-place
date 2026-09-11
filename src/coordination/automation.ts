@@ -29,6 +29,7 @@ export class AutomaticDelivery {
         this.timer = setTimeout(() => { this.timer = undefined; void this.pump(); }, this.batchDelay);
         this.timer.unref();
     }
+    get isHeld(): boolean { return this.held; }
     resume(): void { this.held = false; this.kick(); }
     private ready(): boolean { return !this.disposed && !this.held && this.host.ready(); }
     private async pump(): Promise<void> {
@@ -37,16 +38,29 @@ export class AutomaticDelivery {
         this.busy = true;
         let batch: Activation | null = null;
         try {
-            batch = await transport.call<Activation | null>("auto-reserve", { roomId: this.host.binding.roomId });
+            batch = await transport.call("auto-reserve", { roomId: this.host.binding.roomId });
             if (!batch) return;
             if (!this.ready()) { await this.cancel(transport, batch); return; }
-            // Explicit retry may encounter a previously persisted logical message. Do not re-wake it.
-            for (const message of batch.messages) if (await this.host.persistedEntry(message.id)) {
-                this.active = { batch, submitted: false, started: false, outcome: "unknown" };
-                await this.finish("unknown"); return;
+            // Explicit retry may encounter persisted logical messages. Reconcile them atomically,
+            // refund this never-dispatched activation, then reserve only remaining eligible work.
+            const entries: { messageId: string; entryId: string }[] = [];
+            try {
+                for (const message of batch.messages) {
+                    const entryId = await this.host.persistedEntry(message.id);
+                    if (entryId) entries.push({ messageId: message.id, entryId });
+                }
+            } catch (error) {
+                // Repeated evidence failures must not churn reservations or wake a model.
+                // Hold locally until explicit resume; absence/error never implies recording.
+                this.held = true;
+                throw error;
+            }
+            if (entries.length) {
+                await transport.call("auto-reconcile", { roomId: this.host.binding.roomId, activationId: batch.id, entries });
+                return;
             }
             if (!this.ready()) { await this.cancel(transport, batch); return; }
-            const permit = await transport.call<{ state: string }>("auto-dispatch", { roomId: this.host.binding.roomId, activationId: batch.id });
+            const permit = await transport.call("auto-dispatch", { roomId: this.host.binding.roomId, activationId: batch.id });
             if (permit.state !== "dispatched") return;
             if (!this.ready()) { await this.cancel(transport, batch); return; }
             const { binding } = this.host;
@@ -70,8 +84,10 @@ export class AutomaticDelivery {
         } catch (e) {
             if (this.active?.submitted) await this.finish("unknown");
             else if (batch) await this.cancel(transport, batch).catch(() => {});
-            if (!this.disposed) this.host.notify(`Automatic team delivery could not proceed: ${e instanceof Error ? e.message : String(e)}`);
-        } finally { this.busy = false; if (batch && !this.disposed) this.host.changed(); }
+            if (!this.disposed) this.host.notify(this.held
+                ? `Team · PAUSED (local) — Persisted session evidence could not be read. Fix session-file access, then run /team resume local. ${e instanceof Error ? e.message : String(e)}`
+                : `Automatic team delivery could not proceed: ${e instanceof Error ? e.message : String(e)}`);
+        } finally { this.busy = false; if (batch && !this.disposed) { this.host.changed(); this.kick(); } }
     }
     private cancel(transport: DeliveryTransport, batch: Activation) {
         return transport.call("auto-cancel", { roomId: this.host.binding.roomId, activationId: batch.id });
@@ -116,10 +132,10 @@ export class AutomaticDelivery {
             const transport = this.host.transport();
             if (!transport) throw new Error("Broker disconnected before automatic run receipt.");
             await transport.call("auto-finish", { roomId: this.host.binding.roomId, activationId: active.batch.id, outcome, entries });
-            if (outcome !== "complete") this.host.notify(`Automatic team run ${outcome}; local delivery paused. Inspect /team status, then /team resume local when ready.`);
+            if (outcome !== "complete") this.host.notify(`Team · UNCERTAIN · PAUSED — Automatic run ${outcome}. Inspect /team status, then /team resume local when ready.`);
         } catch (e) {
             this.held = true;
-            if (!this.disposed) this.host.notify(`Automatic team outcome uncertain; inspect/reconcile before resuming. ${e instanceof Error ? e.message : String(e)}`);
+            if (!this.disposed) this.host.notify(`Team · UNCERTAIN · PAUSED — Automatic outcome could not be reconciled. Inspect/reconcile before resuming. ${e instanceof Error ? e.message : String(e)}`);
         } finally {
             active.abortCleanup?.(); this.active = undefined; this.finishing = false;
             if (!this.disposed) this.host.changed();

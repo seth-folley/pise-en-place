@@ -213,6 +213,7 @@
 /team join &lt;room&gt; --name &lt;name&gt; [--role &lt;role&gt;] [--rejoin]
 /team leave
 /team status [joined-room] [participant-id]
+/team dashboard
 /team inbox [cursor] [--history]
 /team thread &lt;thread-id&gt; [cursor]
 /team read &lt;message-id&gt;
@@ -229,6 +230,8 @@
 <li><code>join</code> starts or reuses the local broker, confirms enrollment, and stores the binding in the Pi session. The role defaults to <code>worker</code>. <code>--rejoin</code> recovers the mailbox for an existing disconnected/left identity; it cannot take over a live identity.</li>
 <li><code>leave</code> stops delivery to this session but retains broker history and pending messages for an explicit rejoin.</li>
 <li><code>status</code> shows roster, presence, current work/blockers, requests, and attention counts. To request a participant&#39;s full work text, supply the joined room name/ID followed by the participant ID.</li>
+<li><code>dashboard</code> opens a centered interactive TUI overview. It loads status and the active inbox once, refreshes explicitly with <code>r</code> and after actions or view changes, supports active/history paging and scrollable message detail, and reuses existing confirmation/review behavior. Opening or inspecting it does not acknowledge, deliver, or run an agent.</li>
+<li>Argument completion is local, bounded session-memory metadata only: it suggests known current-room, participant, message, and thread IDs but never discovers rooms or queries the broker while typing.</li>
 <li><code>inbox</code> shows active items by default; <code>--history</code> includes inactive and acknowledged history. <code>thread</code> pages one discussion. <code>read</code> retrieves one full message without delivering it to the agent.</li>
 </ul>
 <h4 id="delivery-and-recovery">Delivery and recovery<a class="anchor" href="#delivery-and-recovery" aria-label="Link to this section">#</a></h4>
