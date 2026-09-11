@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from "node:util";
 import { createSubagentWidget } from "../../extensions/orchestration/subagent/widget.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, type Component } from "@earendil-works/pi-tui";
 import coordination from "../../extensions/coordination/index.ts";
 import { startBroker } from "../../src/coordination/broker.ts";
 import { TeamClient, controlCall } from "../../src/coordination/client.ts";
@@ -19,7 +19,10 @@ function fakeSession(sessionId: string, sessionFile: string, entries: Entry[] = 
     const events = new Map<string, Listener>();
     const tools = new Map<string, ToolDefinition>();
     let command: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+    let commandCompletions: ((prefix: string) => unknown) | undefined;
     let idle = true, approval = true;
+    const customPlans: Array<string[] | "hold"> = [];
+    let activeCustom: Component | undefined;
     const sendMessage = vi.fn((message: { customType: string; content: string; details: unknown }, _options: unknown) => {
         const entry = { type: "custom_message", id: `entry-${entries.length}`, ...message };
         entries.push(entry); appendFileSync(sessionFile, JSON.stringify(entry) + "\n");
@@ -29,22 +32,36 @@ function fakeSession(sessionId: string, sessionFile: string, entries: Entry[] = 
         entries.push(entry); appendFileSync(sessionFile, JSON.stringify(entry) + "\n");
     });
     const notify = vi.fn(); const setWidget = vi.fn();
+    const custom = vi.fn(async (factory: Function) => new Promise<unknown>((resolve) => {
+        let closed = false;
+        const done = (value: unknown) => { if (!closed) { closed = true; activeCustom = undefined; resolve(value); } };
+        const theme = { fg: (_key: string, text: string) => text, bold: (text: string) => text };
+        activeCustom = factory({ requestRender: vi.fn() }, theme, {}, done);
+        const plan = customPlans.shift() ?? ["\x1b"];
+        if (plan !== "hold") for (const key of plan) activeCustom?.handleInput?.(key);
+    }));
     const context = {
         mode: "tui", hasUI: true, isIdle: () => idle,
         sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries },
-        ui: { setWidget, notify, confirm: async () => approval, select: async () => undefined, editor: async () => undefined },
+        ui: { setWidget, notify, custom, confirm: async () => approval, select: async () => undefined, editor: async () => undefined },
     } as unknown as ExtensionCommandContext;
     const pi = {
         on(name: string, handler: Listener) { events.set(name, handler); },
         registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
-        registerCommand(_name: string, definition: { handler: typeof command }) { command = definition.handler; },
+        registerCommand(_name: string, definition: { handler: typeof command; getArgumentCompletions?: (prefix: string) => unknown }) { command = definition.handler; commandCompletions = definition.getArgumentCompletions; },
         registerEntryRenderer() {}, registerMessageRenderer() {}, sendMessage, appendEntry,
     } as unknown as ExtensionAPI;
     coordination(pi);
     const emit = async (name: string, event: Record<string, unknown> = {}) => events.get(name)?.(event, context);
     cleanups.push(() => emit("session_shutdown", { reason: "quit" }));
     const execute = (name: string, params: Record<string, unknown>) => tools.get(name)!.execute("call-id", params, undefined, undefined, context);
-    return { context, emit, entries, tools, sendMessage, notify, setWidget, execute, command: (args: string) => command(args, context), setIdle(v: boolean) { idle = v; }, setApproval(v: boolean) { approval = v; } };
+    return {
+        context, emit, entries, tools, sendMessage, notify, setWidget, custom, execute,
+        command: (args: string) => command(args, context), completions: (prefix: string) => commandCompletions?.(prefix),
+        setIdle(v: boolean) { idle = v; }, setApproval(v: boolean) { approval = v; },
+        planCustom(...plans: Array<string[] | "hold">) { customPlans.push(...plans); },
+        customComponent: () => activeCustom,
+    };
 }
 async function setup() {
     const root = mkdtempSync("/tmp/pi-team-ext-"); cleanups.push(() => rmSync(root, { recursive: true, force: true }));
@@ -69,6 +86,15 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         expect(s.broker.store.db.prepare("SELECT count(*) n FROM participants").get()?.n).toBe(0);
         await expect(s.app.execute("team_status", {})).rejects.toThrow(/Not enrolled/);
         await s.app.command("help"); expect(s.app.entries.length).toBe(1); // TUI-only inspection, not model input.
+    });
+    it("provides cache-only full-tail command completions", async () => {
+        const s = await setup();
+        expect(s.app.completions("")).toEqual(expect.arrayContaining([expect.objectContaining({ value: "join" })]));
+        await s.app.command("join catalog --name app --role worker");
+        expect(s.app.completions("pause ")).toEqual(expect.arrayContaining([expect.objectContaining({ value: "pause local" })]));
+        s.app.context.mode = "print";
+        await s.app.command("dashboard");
+        expect(s.app.notify).toHaveBeenLastCalledWith(expect.stringContaining("Dashboard currently requires interactive TUI"), "error");
     });
     it("/team join works from a fresh directory without a prestarted broker or control key", async () => {
         const root = mkdtempSync("/tmp/pi-team-cold-");
@@ -182,6 +208,46 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         await s.app.emit("ui_prompt_end");
         await expect.poll(() => s.app.sendMessage.mock.calls.length).toBe(1);
         expect(s.app.sendMessage.mock.calls[0][1]).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    });
+    it("disposes the dashboard overlay before opening an existing confirmation", async () => {
+        const s = await setup(); await s.app.command("join catalog --name app --role worker");
+        s.app.planCustom(["\x1b[B", "\x1b[B", "\x1b[B", "\x1b[B", "\r"], ["\x1b"]);
+        const confirm = vi.fn(async () => {
+            expect(s.app.customComponent()).toBeUndefined();
+            return true;
+        });
+        s.app.context.ui.confirm = confirm;
+        await s.app.command("dashboard");
+        expect(confirm).toHaveBeenCalledOnce();
+        expect(s.broker.store.db.prepare("SELECT paused FROM participants WHERE name='app'").get()?.paused).toBe(1);
+    });
+    it("holds automatic delivery until the complete dashboard flow closes", async () => {
+        const s = await setup(); await s.app.command("join catalog --name app --role worker");
+        const b = await controlCall(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
+        const client = await TeamClient.connect(s.paths.socket, { roomId: b.roomId, participantId: b.participantId, sessionId: b.sessionId, token: b.token }); cleanups.push(() => client.close());
+        const teamStatus = await client.call("status", { roomId: b.roomId });
+        const appId = teamStatus.participants.find((participant) => participant.name === "app")!.id;
+        s.app.planCustom("hold");
+        const dashboard = s.app.command("dashboard");
+        await expect.poll(() => s.app.customComponent()).toBeTruthy();
+        await client.call("send", { roomId: b.roomId, idempotencyKey: "during-dashboard", recipients: [appId], type: "question", subject: "Wait", body: "Do not wake yet" });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(s.app.sendMessage).not.toHaveBeenCalled();
+        s.app.customComponent()!.handleInput?.("\x1b");
+        await dashboard;
+        await expect.poll(() => s.app.sendMessage.mock.calls.length).toBe(1);
+        expect(s.app.sendMessage.mock.calls[0][1]).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    });
+    it("stops an open dashboard after session runtime replacement", async () => {
+        const s = await setup(); await s.app.command("join catalog --name app --role worker");
+        s.app.planCustom("hold");
+        const dashboard = s.app.command("dashboard");
+        await expect.poll(() => s.app.customComponent()).toBeTruthy();
+        await s.app.emit("session_shutdown", { reason: "new" });
+        s.app.customComponent()!.handleInput?.("\x1b");
+        await dashboard;
+        expect(s.app.completions("")).toEqual(expect.arrayContaining([expect.objectContaining({ value: "join" })]));
+        expect(s.app.sendMessage).not.toHaveBeenCalled();
     });
     it("reload restores the same binding and session replacement never inherits enrollment", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");

@@ -149,6 +149,7 @@ Read one full message, or a page of summaries (160-character preview; no full bo
 ```text
 /team help
 /team status [joined-room] [participant-id]
+/team dashboard
 /team inbox [cursor] [--history]
 /team thread <thread-id> [cursor]
 /team read <message-id>
@@ -163,6 +164,8 @@ Read one full message, or a page of summaries (160-character preview; no full bo
 ```
 
 ### Automatic communication (default)
+
+`/team dashboard` is an explicit centered TUI overlay for current-room status, active/history inbox paging, scrollable message detail, participant details, and existing delivery/review controls. It performs no polling: opening, `r`, view changes, and completion of an action trigger explicit reads. Its session-memory navigation cache is bounded and stores only allowlisted room, participant, message, and thread metadata—not bodies, summaries, blockers, credentials, session IDs, or delivery internals. Dashboard inspection does not acknowledge, insert, or wake an agent.
 
 You do **not** need `/team deliver` or a separate prompt for each message. Ask an enrolled agent to use `team_send`; the recipient processes eligible messages automatically and a requested reply can wake the sender to continue its existing task.
 

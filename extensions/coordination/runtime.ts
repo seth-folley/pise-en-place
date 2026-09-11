@@ -4,7 +4,8 @@ import { TeamClient, controlCall, type ControlOperations, type OperationParams, 
 import { deliverOne, findPersistedEntry, PEER_MESSAGE_TYPE, reconcileDelivery, type DeliveryAdapter } from "../../src/coordination/delivery.ts";
 import { ensureBroker } from "../../src/coordination/managed.ts";
 import { teamPaths } from "../../src/coordination/paths.ts";
-import { HEARTBEAT_MS, safeText, type Binding, type Credential, type Message, type Runtime, type Status } from "../../src/coordination/protocol.ts";
+import { HEARTBEAT_MS, safeText, type Binding, type Credential, type Message, type Page, type Runtime, type Status } from "../../src/coordination/protocol.ts";
+import { TeamNavigationCache, type TeamNavigationSnapshot } from "../../src/coordination/navigation.ts";
 import { INSPECT_ENTRY_TYPE as INSPECT, MEMBERSHIP_ENTRY_TYPE as MEMBERSHIP, WIDGET_ID as WIDGET } from "./constants.ts";
 import { renderWidget } from "./rendering.ts";
 
@@ -31,11 +32,14 @@ export class CoordinationRuntime {
     private reconnectDelay = 1000;
     private runtime: Runtime = "unknown";
     private uiPrompts = 0;
+    private interactiveFlows = 0;
+    private readonly navigation = new TeamNavigationCache();
     private locallyPaused = false;
     private deliveryBusy = false;
     private joinInFlight?: Promise<boolean>;
     private automatic?: AutomaticDelivery;
     private _lastError = "";
+    private readonly listeners = new Set<() => void>();
 
     constructor(private readonly pi: ExtensionAPI) {}
     get binding(): Binding | undefined { return this._binding; }
@@ -44,8 +48,21 @@ export class CoordinationRuntime {
     get lastError(): string { return this._lastError; }
     get automaticHeld(): boolean { return this.automatic?.isHeld ?? false; }
     get localDeliveryPaused(): boolean { return this.locallyPaused || this.automaticHeld; }
+    navigationSnapshot(): TeamNavigationSnapshot { return this.navigation.snapshot(); }
+    rememberStatus(status: Status): void { if (this._binding) this.navigation.rememberStatus(status, this._binding.participantId); }
+    rememberMessage(message: Message): void { if (this._binding) this.navigation.rememberMessage(message, this._binding.participantId); }
+    rememberPage(page: Page): void { if (this._binding) this.navigation.rememberPage(page, this._binding.participantId); }
     current(context: ExtensionContext): boolean { return !!this.ctx && this.ctx.sessionManager.getSessionId() === context.sessionManager.getSessionId(); }
-    private widget(): void { renderWidget(this.ctx, this._binding, this._status, !!this._client, this.automaticHeld); }
+    isCurrentBinding(binding: Binding): boolean {
+        return this._binding === binding && this.ctx?.sessionManager.getSessionId() === binding.sessionId;
+    }
+    private widget(): void {
+        renderWidget(this.ctx, this._binding, this._status, !!this._client, this.automaticHeld);
+        for (const listener of this.listeners) {
+            try { listener(); } catch { /* Dashboard rendering must not break broker refresh. */ }
+        }
+    }
+    subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
 
     async refresh(): Promise<void> {
         const client = this._client, binding = this._binding, epoch = this.epoch;
@@ -56,6 +73,7 @@ export class CoordinationRuntime {
             if (!next?.room || !Array.isArray(next.participants)) throw new Error("Malformed team status response.");
             if (epoch !== this.epoch || client !== this._client) return;
             this._status = next;
+            this.navigation.rememberStatus(next, binding.participantId);
             this.locallyPaused = !!next.participants.find((participant) => participant.id === binding.participantId)?.paused;
             this._lastError = "";
             this.widget();
@@ -114,7 +132,7 @@ export class CoordinationRuntime {
             this.automatic = new AutomaticDelivery({
                 binding,
                 transport: () => epoch === this.epoch ? this._client : undefined,
-                ready: () => epoch === this.epoch && !!this.ctx && !!this._client && this.ctx.isIdle() && this.runtime === "idle" && this.uiPrompts === 0 && !this.ctx.hasPendingMessages?.() && !this.deliveryBusy && !this.locallyPaused && !this._status?.room.paused,
+                ready: () => epoch === this.epoch && !!this.ctx && !!this._client && this.ctx.isIdle() && this.runtime === "idle" && this.uiPrompts === 0 && this.interactiveFlows === 0 && !this.ctx.hasPendingMessages?.() && !this.deliveryBusy && !this.locallyPaused && !this._status?.room.paused,
                 insert: (content, details) => this.pi.sendMessage({ customType: PEER_BATCH_TYPE, content, details, display: true }, { deliverAs: "followUp", triggerTurn: true }),
                 persistedEntry: (id) => findPersistedEntry(epoch === this.epoch ? this.ctx?.sessionManager.getSessionFile() : undefined, binding, id),
                 notify: (message) => { if (epoch === this.epoch) this.ctx?.ui.notify(message, "warning"); },
@@ -160,6 +178,18 @@ export class CoordinationRuntime {
         this.deliveryBusy = true;
         try { return await fn(); } finally { this.deliveryBusy = false; }
     }
+    async withInteractiveFlow<T>(fn: () => Promise<T>): Promise<T> {
+        this.interactiveFlows++;
+        this.runtime = "waiting-for-user";
+        try { return await fn(); }
+        finally {
+            this.interactiveFlows = Math.max(0, this.interactiveFlows - 1);
+            if (!this.interactiveFlows && this.ctx) {
+                this.runtime = this.uiPrompts ? "waiting-for-user" : this.ctx.isIdle() ? "idle" : "working";
+                this.automatic?.kick();
+            }
+        }
+    }
     deliver(client: TeamClient, context: ExtensionContext, binding: Binding, messageId: string): Promise<string> { return deliverOne(client, this.adapter(context, binding), messageId); }
     reconcile(client: TeamClient, context: ExtensionContext, binding: Binding, delivery: Message["deliveries"][number]): Promise<boolean> { return reconcileDelivery(client, this.adapter(context, binding), delivery); }
     control<Name extends keyof ControlOperations & string>(operation: Name, params: OperationParams<ControlOperations, Name>): Promise<OperationResult<ControlOperations, Name>> { return controlCall(teamPaths(), operation, params); }
@@ -177,6 +207,7 @@ export class CoordinationRuntime {
         const joined = await controlCall(teamPaths(), "join", { room, name, role, sessionId: context.sessionManager.getSessionId(), rejoin });
         if (epoch !== this.epoch || !this.current(context)) return false;
         this.credential = joined;
+        this.navigation.reset(joined.roomId);
         const { token: _token, ...binding } = joined;
         this._binding = binding;
         this.pi.appendEntry(MEMBERSHIP, { binding });
@@ -194,6 +225,8 @@ export class CoordinationRuntime {
         this.credential = undefined;
         this._binding = undefined;
         this._status = undefined;
+        this.navigation.reset();
+        this.interactiveFlows = 0;
         this.connecting = false;
         this.refreshing = false;
         if (this.timer) clearInterval(this.timer);
@@ -212,6 +245,12 @@ export class CoordinationRuntime {
     resumeAutomatic(): void { this.automatic?.resume(); }
 
     async sessionStart(event: { reason: string }, context: ExtensionContext): Promise<void> {
+        if (this.ctx && this.ctx.sessionManager.getSessionId() !== context.sessionManager.getSessionId()) {
+            const staleClient = this._client;
+            this._client = undefined;
+            this.clearEnrollment();
+            await staleClient?.close();
+        }
         this.ctx = context;
         this.runtime = context.isIdle() ? "idle" : "working";
         if (event.reason !== "reload") return;
@@ -226,6 +265,7 @@ export class CoordinationRuntime {
             const recovered = await controlCall(teamPaths(), "restore", { roomId: saved.binding.roomId, participantId: saved.binding.participantId, sessionId: saved.binding.sessionId });
             if (epoch !== this.epoch) return;
             this.credential = recovered;
+            this.navigation.reset(recovered.roomId);
             const { token: _token, ...binding } = recovered;
             this._binding = binding;
             this.start();
@@ -250,14 +290,16 @@ export class CoordinationRuntime {
         this.credential = undefined;
         this._binding = undefined;
         this._status = undefined;
+        this.navigation.reset();
         this.uiPrompts = 0;
+        this.interactiveFlows = 0;
         this.connecting = false;
         this.refreshing = false;
         await client?.close();
     }
-    agentStarted(context: ExtensionContext, signal?: AbortSignal): void { if (this.current(context)) { this.ctx = context; this.runtime = "working"; this.automatic?.agentStarted(signal); } }
+    agentStarted(context: ExtensionContext, signal?: AbortSignal): void { if (this.current(context)) { this.ctx = context; this.runtime = this.interactiveFlows ? "waiting-for-user" : "working"; this.automatic?.agentStarted(signal); } }
     agentEnded(context: ExtensionContext, messages: readonly { role: string; stopReason?: string }[]): void { if (this.current(context)) this.automatic?.agentEnded(messages); }
-    async agentSettled(context: ExtensionContext): Promise<void> { if (this.current(context)) { this.ctx = context; this.runtime = this.uiPrompts ? "waiting-for-user" : context.isIdle() ? "idle" : "working"; await this.automatic?.settled(); } }
+    async agentSettled(context: ExtensionContext): Promise<void> { if (this.current(context)) { this.ctx = context; this.runtime = this.uiPrompts || this.interactiveFlows ? "waiting-for-user" : context.isIdle() ? "idle" : "working"; await this.automatic?.settled(); } }
     promptStarted(context: ExtensionContext): void { if (this.current(context)) { this.uiPrompts++; this.runtime = "waiting-for-user"; } }
-    promptEnded(context: ExtensionContext): void { if (this.current(context)) { this.uiPrompts = Math.max(0, this.uiPrompts - 1); this.runtime = this.uiPrompts ? "waiting-for-user" : context.isIdle() ? "idle" : "working"; this.automatic?.kick(); } }
+    promptEnded(context: ExtensionContext): void { if (this.current(context)) { this.uiPrompts = Math.max(0, this.uiPrompts - 1); this.runtime = this.uiPrompts || this.interactiveFlows ? "waiting-for-user" : context.isIdle() ? "idle" : "working"; if (!this.interactiveFlows) this.automatic?.kick(); } }
 }

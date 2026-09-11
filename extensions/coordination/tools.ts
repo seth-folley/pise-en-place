@@ -2,13 +2,16 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { TeamClient } from "../../src/coordination/client.ts";
-import { MAX_BODY_BYTES, MESSAGE_TYPES, type Binding } from "../../src/coordination/protocol.ts";
+import { MAX_BODY_BYTES, MESSAGE_TYPES, type Binding, type Message, type Page, type Status } from "../../src/coordination/protocol.ts";
 import { ackToolResult, formatTeamToolResult, readMessageToolResult, readPageToolResult, sendToolResult, statusToolResult } from "../../src/coordination/tool-results.ts";
 
 interface ToolHost {
     readonly automaticHeld: boolean;
     readonly localDeliveryPaused: boolean;
     requireClient(roomId?: string): { client: TeamClient; binding: Binding };
+    rememberStatus?(status: Status): void;
+    rememberMessage?(message: Message): void;
+    rememberPage?(page: Page): void;
 }
 
 export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
@@ -20,6 +23,7 @@ export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
             const c = host.requireClient(params.roomId);
             if (params.summary !== undefined || params.blocker !== undefined) await c.client.call("work", { roomId: c.binding.roomId, ...(params.summary !== undefined ? { summary: params.summary } : {}), ...(params.blocker !== undefined ? { blocker: params.blocker } : {}) }, signal);
             const s = await c.client.call("status", { roomId: c.binding.roomId, ...(params.participantId ? { participantId: params.participantId } : {}) }, signal);
+            host.rememberStatus?.(s);
             return formatTeamToolResult(statusToolResult(s, host.automaticHeld, host.localDeliveryPaused));
         },
     });
@@ -29,6 +33,7 @@ export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
         parameters: Type.Object({ roomId: Type.String(), idempotencyKey: Type.String({ minLength: 1, maxLength: 100 }), recipients: Type.Array(Type.String(), { minItems: 1, maxItems: 8 }), type: StringEnum(MESSAGE_TYPES), actionable: Type.Optional(Type.Boolean({ description: "Handoffs only: request continuation of an existing authorized assignment and allow an automatic wakeup. Not new scope or permission." })), body: Type.String({ minLength: 1, maxLength: MAX_BODY_BYTES }), subject: Type.Optional(Type.String({ maxLength: 200 })), threadId: Type.Optional(Type.String()), replyTo: Type.Optional(Type.String()), references: Type.Optional(Type.Array(Type.String({ maxLength: 1000 }), { maxItems: 8 })) }, { additionalProperties: false }),
         async execute(_id, params, signal) {
             const c = host.requireClient(params.roomId); const m = await c.client.call("send", params, signal);
+            host.rememberMessage?.(m);
             return formatTeamToolResult(sendToolResult(m, params.idempotencyKey));
         },
     });
@@ -49,6 +54,8 @@ export function registerTeamTools(pi: ExtensionAPI, host: ToolHost): void {
             const value = query.messageId
                 ? await c.client.call("read", { roomId: c.binding.roomId, messageId: query.messageId }, signal)
                 : await c.client.call("read", { roomId: c.binding.roomId, ...(query.threadId ? { threadId: query.threadId } : {}), ...(query.cursor !== undefined ? { cursor: query.cursor } : {}), ...(query.limit !== undefined ? { limit: query.limit } : {}), ...(query.history !== undefined ? { history: query.history } : {}) }, signal);
+            if ("items" in value) host.rememberPage?.(value);
+            else host.rememberMessage?.(value);
             return formatTeamToolResult("items" in value
                 ? readPageToolResult(value, { roomId: c.binding.roomId, ...(query.threadId ? { threadId: query.threadId } : {}), ...(query.cursor !== undefined ? { cursor: query.cursor } : {}), ...(query.limit !== undefined ? { limit: query.limit } : {}), ...(query.history !== undefined ? { history: query.history } : {}) })
                 : readMessageToolResult(value));

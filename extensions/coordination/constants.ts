@@ -6,6 +6,7 @@ export const TEAM_HELP = `Team coordination · automatic communication
 /team join <room> --name <name> --role <role> [--rejoin]
 /team leave                 Leave this room; keep history
 /team status                Roster, presence, requests, blockers
+/team dashboard             Interactive overview (TUI only; refresh with r)
 /team inbox [cursor] [--history]  Active inbox (or all history)
 /team thread <id> [cursor]  Paginated thread summaries
 /team read <message>        Inspect full message without agent delivery

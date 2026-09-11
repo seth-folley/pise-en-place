@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { messageText, pageText, statusText } from "../../src/coordination/presentation.ts";
 import { TeamError } from "../../src/coordination/protocol.ts";
 import { TEAM_HELP as HELP } from "./constants.ts";
 import { CoordinationRuntime, errorText } from "./runtime.ts";
+import { teamArgumentCompletions } from "./completions.ts";
+import { showTeamDashboard } from "./dashboard.ts";
 
 function notificationText(error: unknown): string {
     return error instanceof TeamError && ["PAUSED", "UNCERTAIN"].includes(error.code)
@@ -11,14 +13,16 @@ function notificationText(error: unknown): string {
         : `Team: ${errorText(error)}`;
 }
 
-export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRuntime): void {
-    pi.registerCommand("team", {
-        description: "Join an isolated team room with automatic peer communication; inspect, pause, or review messages",
-        handler: async (args, commandCtx) => {
-            const [op = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
-            try {
-                if (op === "help") { runtime.inspect(HELP); return; }
-                if (op === "join") {
+export async function executeTeamCommand(runtime: CoordinationRuntime, args: string, commandCtx: ExtensionCommandContext): Promise<void> {
+    const [op = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
+    try {
+        if (op === "help") { runtime.inspect(HELP); return; }
+        if (op === "dashboard") {
+            if (commandCtx.mode !== "tui" || !commandCtx.hasUI) throw new Error("Dashboard currently requires interactive TUI. Use /team status in headless or RPC mode.");
+            await showTeamDashboard(runtime, commandCtx, (actionArgs) => executeTeamCommand(runtime, actionArgs, commandCtx));
+            return;
+        }
+        if (op === "join") {
                     if (runtime.binding) throw new Error("Already enrolled. This pilot supports one room per session; /team leave first or join the other room in another Pi session.");
                     const room = rest[0];
                     let name: string | undefined, role = "worker", rejoin = false;
@@ -35,41 +39,45 @@ export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRunti
                     runtime.inspect(`Joined ${room} as ${binding.name}. Room ID ${binding.roomId}\n${runtime.client ? "Connected. Eligible inbox messages will be processed automatically at idle boundaries." : runtime.lastError}\n/team status · /team inbox · /team help`);
                     return;
                 }
-                const binding = runtime.binding;
-                if (!runtime.client && binding && op === "status") {
+        const binding = runtime.binding;
+        if (!runtime.client && binding && op === "status") {
                     if (rest.length && rest[0] !== binding.roomName && rest[0] !== binding.roomId) throw new Error("This session is not enrolled in that room.");
                     runtime.inspect(runtime.status ? `${statusText(runtime.status, true, runtime.automaticHeld)}\n${runtime.lastError}` : `TEAM ${binding.roomName} · broker unavailable · presence unknown${runtime.automaticHeld ? " · LOCAL HOLD" : ""}\n${runtime.lastError}\nAutomatic reconnect is pending; local coding can continue.${runtime.automaticHeld ? " Inspect/reconcile as needed, then /team resume local." : ""}`);
                     return;
                 }
-                if (!runtime.client && binding && op === "leave") {
+        if (!runtime.client && binding && op === "leave") {
                     if (!await runtime.confirm(commandCtx, `Detach from ${binding.roomName} while offline?`, "Stop reconnecting this session. The broker cannot record an explicit departure while unavailable; its membership/history remain for explicit rejoin.")) return;
                     runtime.detachOffline();
                     return;
                 }
-                const connection = runtime.requireClient();
-                const scope = { roomId: connection.binding.roomId };
-                if (op === "status") {
+        const connection = runtime.requireClient();
+        const scope = { roomId: connection.binding.roomId };
+        if (op === "status") {
                     if (rest.length && rest[0] !== connection.binding.roomName && rest[0] !== connection.binding.roomId) throw new Error("This session is not enrolled in that room.");
                     if (rest.length > 2) throw new Error("Usage: /team status [joined-room] [participant-id]");
-                    runtime.inspect(statusText(await connection.client.call("status", { ...scope, ...(rest[1] ? { participantId: rest[1] } : {}) }), false, runtime.automaticHeld));
+                    const status = await connection.client.call("status", { ...scope, ...(rest[1] ? { participantId: rest[1] } : {}) });
+                    runtime.rememberStatus(status);
+                    runtime.inspect(statusText(status, false, runtime.automaticHeld));
                     return;
                 }
-                if (op === "inbox" || op === "thread" || op === "read") {
+        if (op === "inbox" || op === "thread" || op === "read") {
                     if ((op === "thread" || op === "read") && !rest[0]) throw new Error(`Usage: /team ${op} <id>`);
                     const inboxArgs = rest.filter((arg) => arg !== "--history");
                     const cursor = Number((op === "inbox" ? inboxArgs[0] : rest[1]) ?? 0);
                     const query = op === "read" ? { ...scope, messageId: rest[0] } : op === "thread" ? { ...scope, threadId: rest[0], cursor } : { ...scope, cursor, history: rest.includes("--history") };
                     const value = await connection.client.call("read", query);
+                    if ("items" in value) runtime.rememberPage(value); else runtime.rememberMessage(value);
                     runtime.inspect("items" in value ? pageText(value) : messageText(value));
                     return;
                 }
-                if (["deliver", "reconcile", "retry"].includes(op)) {
+        if (["deliver", "reconcile", "retry"].includes(op)) {
                     const id = rest[0];
                     if (!id) throw new Error(`Usage: /team ${op} <message>`);
                     await runtime.withDelivery(async () => {
                         if (op === "deliver") runtime.inspect(await runtime.deliver(connection.client, commandCtx, connection.binding, id));
                         else {
                             const message = await connection.client.call("read", { ...scope, messageId: id });
+                            runtime.rememberMessage(message);
                             const delivery = message.deliveries.find((item) => item.recipient_id === connection.binding.participantId);
                             if (!delivery) throw new Error("This message is not addressed to you.");
                             if (await runtime.reconcile(connection.client, commandCtx, connection.binding, delivery)) runtime.inspect("Persisted entry reconciled. No duplicate insertion or model run.");
@@ -82,7 +90,7 @@ export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRunti
                     await runtime.refresh();
                     return;
                 }
-                if (op === "pause" || op === "resume") {
+        if (op === "pause" || op === "resume") {
                     const scopeName = rest[0] ?? "local";
                     if (!["local", "room", "project"].includes(scopeName)) throw new Error("Use local or room pause scope.");
                     if (!await runtime.confirm(commandCtx, `${op} ${scopeName} delivery?`, `Team ${connection.binding.roomName}. Does not abort current work or undo dispatched operations. Resume can wake still-eligible pending messages; it does not replay recorded history or reset budgets.`)) return;
@@ -92,22 +100,23 @@ export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRunti
                     await runtime.refresh();
                     return;
                 }
-                if (op === "leave") {
+        if (op === "leave") {
                     if (!await runtime.confirm(commandCtx, `Leave ${connection.binding.roomName}?`, "Stop delivery to this session. Keep all history and pending messages for explicit rejoin.")) return;
                     await runtime.leave(connection.client, connection.binding);
                     return;
                 }
-                if (op === "resolve") {
+        if (op === "resolve") {
                     if (!rest[0]) throw new Error("Usage: /team resolve <thread>");
                     if (!await runtime.confirm(commandCtx, "Resolve this discussion?", `Team ${connection.binding.roomName} · Thread ${rest[0]}. Closes open response obligations, not a protected decision approval.`)) return;
                     await runtime.control("resolve", { ...scope, threadId: rest[0] });
                     await runtime.refresh();
                     return;
                 }
-                if (op === "review") {
+        if (op === "review") {
                     if (!rest[0]) throw new Error("Usage: /team review <message>");
                     if (commandCtx.mode !== "tui") throw new Error("Review currently requires TUI. Request remains pending.");
                     const message = await connection.client.call("read", { ...scope, messageId: rest[0] });
+                    runtime.rememberMessage(message);
                     runtime.inspect(messageText(message));
                     const selected = await commandCtx.ui.select("Review recipient delivery", message.deliveries.map((delivery) => `${delivery.recipientName} · ${delivery.state} · ${delivery.obligation} · ${delivery.recipient_id}`));
                     const delivery = message.deliveries.find((item) => selected?.endsWith(item.recipient_id));
@@ -121,6 +130,7 @@ export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRunti
                         idempotencyKey = randomUUID();
                     } else if (action === "Redirect within room") {
                         const status = await connection.client.call("status", scope);
+                        runtime.rememberStatus(status);
                         const choices = status.participants.filter((participant) => participant.joined && !message.deliveries.some((item) => item.recipient_id === participant.id));
                         const choice = await commandCtx.ui.select("Choose room participant", choices.map((participant) => `${participant.name} · ${participant.presence} · ${participant.id}`));
                         recipientId = choices.find((participant) => choice?.endsWith(participant.id))?.id;
@@ -135,11 +145,17 @@ export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRunti
                     await runtime.refresh();
                     return;
                 }
-                throw new Error(HELP);
-            } catch (error) {
-                commandCtx.ui.notify(notificationText(error), "error");
-                if (error instanceof TeamError && error.code === "NAME_EXISTS") runtime.inspect("To recover an existing disconnected/left participant, explicitly use /team join <room> --name <name> --role <role> --rejoin. Another session's live identity cannot be taken over.");
-            }
-        },
+        throw new Error(HELP);
+    } catch (error) {
+        commandCtx.ui.notify(notificationText(error), "error");
+        if (error instanceof TeamError && error.code === "NAME_EXISTS") runtime.inspect("To recover an existing disconnected/left participant, explicitly use /team join <room> --name <name> --role <role> --rejoin. Another session's live identity cannot be taken over.");
+    }
+}
+
+export function registerTeamCommand(pi: ExtensionAPI, runtime: CoordinationRuntime): void {
+    pi.registerCommand("team", {
+        description: "Join an isolated team room with automatic peer communication; inspect, pause, review, or open dashboard",
+        getArgumentCompletions: (prefix) => teamArgumentCompletions(prefix, runtime.navigationSnapshot()),
+        handler: (args, commandCtx) => executeTeamCommand(runtime, args, commandCtx),
     });
 }

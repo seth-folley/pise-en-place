@@ -90,7 +90,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 
 ### Agent coordination (autonomous communication)
 
-- `extensions/coordination/index.ts` adds `/team`, `team_status`, `team_send`, `team_read`, and a persistent team widget.
+- `extensions/coordination/index.ts` adds `/team` (including local-ID completion and an explicit dashboard), `team_status`, `team_send`, `team_read`, and a persistent team widget.
 - An automatically managed local Unix-socket broker owns SQLite-backed rooms, messages, inboxes, presence, and delivery recovery. Multiple isolated teams can run concurrently; the pilot joins one room per Pi session.
 - Reload Pi, then `/team join <room> --name <name> --role worker`. Joining starts/reuses the broker automatically; it shuts down after 60 seconds without connections. No normal setup/teardown commands.
 - Eligible messages automatically wake idle recipients or wait for busy agents to settle. Questions, requested replies, decision requests, and actionable handoffs are eligible; informational traffic never wakes agents.
