@@ -2,14 +2,34 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, isAbsolute, resolve } from "node:path";
 
-export type ImproveSkillArguments = {
-	skillArgument: string;
-	focus?: string;
-	promptPath?: string;
-	showPrompt: boolean;
-};
+export type ImproveSkillArguments =
+	| { help: true }
+	| {
+		help: false;
+		skillArgument: string;
+		focus?: string;
+		promptPath?: string;
+		showPrompt: boolean;
+	};
 
-const usage = "Usage: /improve-skill <skill-name-or-absolute-path> [--focus \"text\"] [--prompt <markdown-file>] [--show-prompt]";
+const usage = "Usage: /skill-review <skill-name-or-absolute-path> [--focus \"text\"] [--prompt <markdown-file>] [--show-prompt]";
+
+export function skillReviewHelpText(): string {
+	return [
+		"Skill review",
+		"",
+		usage,
+		"",
+		"Options:",
+		"  --focus \"text\"       Append additional criteria to every reviewer prompt.",
+		"  --prompt <file.md>    Replace the built-in prompt with a Markdown file.",
+		"  --show-prompt         Preview the composed reviewer prompts without launching.",
+		"  -h, --help            Show this help.",
+		"",
+		"Agent tool: skill_review_prompt returns the exact composed prompts without launching reviewers.",
+		"Reviews run in Pi, Codex, and Claude, are consolidated automatically, and are retained under ~/.pi/agent/skill-reviews/.",
+	].join("\n");
+}
 
 export function tokenizeArguments(input: string): string[] {
 	const tokens: string[] = [];
@@ -72,6 +92,12 @@ function optionValue(tokens: string[], index: number, option: string): { value: 
 
 export function parseImproveSkillArguments(input: string): ImproveSkillArguments {
 	const tokens = tokenizeArguments(input);
+	const helpOptions = tokens.filter((token) => token === "--help" || token === "-h");
+	if (helpOptions.length > 0) {
+		if (tokens.length !== 1) throw new Error(`${helpOptions[0]} cannot be combined with other arguments.`);
+		return { help: true };
+	}
+
 	let skillArgument: string | undefined;
 	let focus: string | undefined;
 	let promptPath: string | undefined;
@@ -105,7 +131,7 @@ export function parseImproveSkillArguments(input: string): ImproveSkillArguments
 	}
 
 	if (!skillArgument) throw new Error(usage);
-	return { skillArgument, focus, promptPath, showPrompt };
+	return { help: false, skillArgument, focus, promptPath, showPrompt };
 }
 
 function expandHome(filePath: string): string {

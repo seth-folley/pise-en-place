@@ -13,7 +13,7 @@ const skillNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export function classifySkillArgument(value: string): { kind: "name" | "path"; value: string } {
 	const trimmed = value.trim();
-	if (!trimmed) throw new Error("Usage: /improve-skill <skill-name-or-absolute-path>");
+	if (!trimmed) throw new Error("Usage: /skill-review <skill-name-or-absolute-path>");
 	if (/[\0-\x1F\x7F]/.test(trimmed)) throw new Error("The skill argument cannot contain control characters.");
 
 	if (trimmed.includes("/")) {

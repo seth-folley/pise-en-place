@@ -21,6 +21,7 @@
 <div class="sidebar-title">Command reference</div>
 <nav class="nav" aria-label="Command reference sections"><a class="depth-2" href="#quick-reference">Quick reference</a>
 <a class="depth-2" href="#usage-and-skills">Usage and skills</a>
+<a class="depth-3" href="#skill-review">/skill-review</a>
 <a class="depth-3" href="#usage">/usage</a>
 <a class="depth-3" href="#update-skills">/update-skills</a>
 <a class="depth-2" href="#evaluation-and-orchestration">Evaluation and orchestration</a>
@@ -61,6 +62,10 @@
 <tr>
 <td><a href="#update-skills"><code>/update-skills</code></a></td>
 <td>Check, select, and install agent skill updates</td>
+</tr>
+<tr>
+<td><a href="#skill-review"><code>/skill-review</code></a></td>
+<td>Retain independent skill reviews and automatically consolidate them</td>
 </tr>
 <tr>
 <td><a href="#skill-eval"><code>/skill-eval</code></a></td>
@@ -116,6 +121,41 @@
 </tr>
 </tbody></table>
 <h2 id="usage-and-skills">Usage and skills<a class="anchor" href="#usage-and-skills" aria-label="Link to this section">#</a></h2>
+<h3 id="skill-review"><code>/skill-review</code><a class="anchor" href="#skill-review" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/skill-review &lt;skill-name&gt;
+/skill-review &lt;/absolute/path/to/skill-directory&gt;
+/skill-review &lt;/absolute/path/to/skill/SKILL.md&gt;
+/skill-review &lt;skill&gt; --focus &quot;additional review criteria&quot;
+/skill-review &lt;skill&gt; --prompt &lt;path/to/prompt.md&gt;
+/skill-review &lt;skill&gt; --show-prompt
+/skill-review --help
+</code></pre>
+<p>Opens a new tab in the current Supacode worktree with independent, read-only, one-shot Pi, Codex, and Claude reviews plus an automatic consolidated review in a fourth pane. Each reviewer keeps its normal native CLI session so the session can be revisited later. The command does not edit the skill.</p>
+<p>The read-only <code>skill_review_prompt</code> agent tool resolves a skill and returns the exact prompts this command would send without launching reviewers. Agents are instructed to use it before asking for additional focus areas or proposing a replacement prompt. It accepts <code>skill</code> plus optional <code>focus</code> and <code>promptPath</code> parameters.</p>
+<p>Every invocation creates a private retained run under:</p>
+<pre><code class="language-text">~/.pi/agent/skill-reviews/&lt;skill-name&gt;/&lt;run-id&gt;/
+  run.json
+  prompts/
+    pi.md
+    codex.md
+    claude.md
+    consolidated.md
+  pi.md
+  codex.md
+  claude.md
+  consolidated.md
+</code></pre>
+<p>The exact reviewer and consolidator prompts are retained under <code>prompts/</code>. Reviewer stderr logs and status JSON files are retained alongside the outputs. <code>run.json</code> records the resolved skill, prompt options, artifact paths, reviewer outcomes, native session IDs and files, effective model/provider metadata, and overall completion status. Pi and Claude session IDs are assigned before launch; Codex&#39;s thread ID is captured from its structured event stream. The consolidation pane waits up to 30 minutes for all reviewers to settle, notes failures or timeouts, verifies findings against the skill, and produces a deduplicated prioritized action plan. Reviewer output is both displayed in its pane and captured in the run directory.</p>
+<p><code>--focus</code> appends an <code>Additional review focus</code> section to the prompt sent identically to all three reviewers. Quote multi-word focus text. <code>--prompt</code> replaces the built-in prompt with the non-empty contents of a <code>.md</code> or <code>.markdown</code> file; its path may be absolute, relative to the current directory, or start with <code>~/</code>. <code>--focus</code> and <code>--prompt</code> may be combined.</p>
+<p><code>--show-prompt</code> resolves the skill and opens a read-only preview of the exact three prompts that would be used, without launching reviewers. It may be combined with <code>--focus</code> and <code>--prompt</code> to inspect the fully composed prompts before launching a review.</p>
+<p><code>--help</code> (or <code>-h</code>) displays command usage, options, and the retained-output location without resolving a skill or launching reviewers.</p>
+<p>A bare name resolves the first readable <code>SKILL.md</code> in this order:</p>
+<ol>
+<li><code>&lt;repository&gt;/skills/&lt;name&gt;/SKILL.md</code></li>
+<li><code>&lt;repository&gt;/.agents/skills/&lt;name&gt;/SKILL.md</code></li>
+<li><code>~/.agents/skills/&lt;name&gt;/SKILL.md</code></li>
+</ol>
+<p>Skill path inputs must be absolute; a directory must contain a readable <code>SKILL.md</code>. Launching reviews requires interactive Pi running in Supacode, a Git worktree, and available <code>supacode</code>, <code>pi</code>, <code>codex</code>, and <code>claude</code> executables. The <code>--show-prompt</code> preview only requires interactive Pi and the Git worktree used to resolve the skill.</p>
 <h3 id="usage"><code>/usage</code><a class="anchor" href="#usage" aria-label="Link to this section">#</a></h3>
 <p>Tracks finalized assistant-response metadata in <code>~/.pi/agent/usage/ledger.jsonl</code> and reports it without storing prompt or response content.</p>
 <h4 id="summaries">Summaries<a class="anchor" href="#summaries" aria-label="Link to this section">#</a></h4>

@@ -10,7 +10,7 @@ After changing or installing extensions, run Pi's built-in `/reload` command.
 | --- | --- |
 | [`/usage`](#usage) | Usage ledger reports, Codex subscription limits, session tags, and skill-read reports |
 | [`/update-skills`](#update-skills) | Check, select, and install agent skill updates |
-| [`/improve-skill`](#improve-skill) | Open independent read-only skill reviews in Pi, Codex, and Claude |
+| [`/skill-review`](#skill-review) | Retain independent skill reviews and automatically consolidate them |
 | [`/skill-eval`](#skill-eval) | Validate, run, and review skill evaluations |
 | [`/subagents`](#subagents) | List retained child sessions created by the subagent tool |
 | [`/team`](#team) | Join and manage an isolated coordination room |
@@ -27,22 +27,45 @@ After changing or installing extensions, run Pi's built-in `/reload` command.
 
 ## Usage and skills
 
-### `/improve-skill`
+### `/skill-review`
 
 ```text
-/improve-skill <skill-name>
-/improve-skill </absolute/path/to/skill-directory>
-/improve-skill </absolute/path/to/skill/SKILL.md>
-/improve-skill <skill> --focus "additional review criteria"
-/improve-skill <skill> --prompt <path/to/prompt.md>
-/improve-skill <skill> --show-prompt
+/skill-review <skill-name>
+/skill-review </absolute/path/to/skill-directory>
+/skill-review </absolute/path/to/skill/SKILL.md>
+/skill-review <skill> --focus "additional review criteria"
+/skill-review <skill> --prompt <path/to/prompt.md>
+/skill-review <skill> --show-prompt
+/skill-review --help
 ```
 
-Opens a new tab in the current Supacode worktree with independent, read-only, one-shot reviews in three columns: Pi, Codex, then Claude. Results stay in their panes for manual comparison; the command does not edit the skill, persist review artifacts, or consolidate findings.
+Opens a new tab in the current Supacode worktree with independent, read-only, one-shot Pi, Codex, and Claude reviews plus an automatic consolidated review in a fourth pane. Each reviewer keeps its normal native CLI session so the session can be revisited later. The command does not edit the skill.
+
+The read-only `skill_review_prompt` agent tool resolves a skill and returns the exact prompts this command would send without launching reviewers. Agents are instructed to use it before asking for additional focus areas or proposing a replacement prompt. It accepts `skill` plus optional `focus` and `promptPath` parameters.
+
+Every invocation creates a private retained run under:
+
+```text
+~/.pi/agent/skill-reviews/<skill-name>/<run-id>/
+  run.json
+  prompts/
+    pi.md
+    codex.md
+    claude.md
+    consolidated.md
+  pi.md
+  codex.md
+  claude.md
+  consolidated.md
+```
+
+The exact reviewer and consolidator prompts are retained under `prompts/`. Reviewer stderr logs and status JSON files are retained alongside the outputs. `run.json` records the resolved skill, prompt options, artifact paths, reviewer outcomes, native session IDs and files, effective model/provider metadata, and overall completion status. Pi and Claude session IDs are assigned before launch; Codex's thread ID is captured from its structured event stream. The consolidation pane waits up to 30 minutes for all reviewers to settle, notes failures or timeouts, verifies findings against the skill, and produces a deduplicated prioritized action plan. Reviewer output is both displayed in its pane and captured in the run directory.
 
 `--focus` appends an `Additional review focus` section to the prompt sent identically to all three reviewers. Quote multi-word focus text. `--prompt` replaces the built-in prompt with the non-empty contents of a `.md` or `.markdown` file; its path may be absolute, relative to the current directory, or start with `~/`. `--focus` and `--prompt` may be combined.
 
 `--show-prompt` resolves the skill and opens a read-only preview of the exact three prompts that would be used, without launching reviewers. It may be combined with `--focus` and `--prompt` to inspect the fully composed prompts before launching a review.
+
+`--help` (or `-h`) displays command usage, options, and the retained-output location without resolving a skill or launching reviewers.
 
 A bare name resolves the first readable `SKILL.md` in this order:
 

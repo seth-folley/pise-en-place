@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Reviewer } from "./prompt.ts";
 
 export type LaunchPlan = {
@@ -16,30 +17,46 @@ export function shellCommand(argv: string[]): string {
 
 export function safeTabTitle(skillName: string): string {
 	const cleaned = skillName.replace(/[\0-\x1F\x7F]/g, " ").trim() || "skill";
-	return `Improve skill: ${cleaned}`.slice(0, 120);
+	return `Skill review: ${cleaned}`.slice(0, 120);
 }
 
-export function buildLaunchPlans(promptByReviewer: Record<Reviewer, string>, repositoryRoot: string, skillDirectory: string): LaunchPlan[] {
+function capturedCommand(runnerPath: string, runDir: string, reviewer: Reviewer, argv: string[], format = "text", stdinFile?: string): string {
+	return shellCommand(["node", runnerPath, "capture", runDir, reviewer, "--format", format, ...(stdinFile ? ["--stdin-file", stdinFile] : []), "--", ...argv]);
+}
+
+export function buildLaunchPlans(
+	repositoryRoot: string,
+	skillDirectory: string,
+	runDir: string,
+	runnerPath: string,
+	skillName: string,
+	sessionIds: Record<Reviewer, string | null>,
+): LaunchPlan[] {
 	return [
 		{
 			reviewer: "Pi",
-			command: shellCommand([
-				"pi", "--print", "--no-session", "--no-extensions", "--no-skills",
-				"--tools", "read,grep,find,ls", promptByReviewer.Pi,
-			]),
+			command: capturedCommand(runnerPath, runDir, "Pi", [
+				"pi", "--print", "--no-extensions", "--no-skills", "--name", `Skill review: ${skillName} (Pi)`,
+				"--session-id", sessionIds.Pi!, "--tools", "read,grep,find,ls",
+			], "text", path.join(runDir, "prompts", "pi.md")),
 		},
 		{
 			reviewer: "Codex",
-			command: shellCommand([
-				"codex", "exec", "--ephemeral", "--sandbox", "read-only", "--cd", repositoryRoot, promptByReviewer.Codex,
-			]),
+			command: capturedCommand(runnerPath, runDir, "Codex", [
+				"codex", "exec", "--json", "--sandbox", "read-only", "--cd", repositoryRoot,
+			], "codex-json", path.join(runDir, "prompts", "codex.md")),
 		},
 		{
 			reviewer: "Claude",
-			command: shellCommand([
-				"claude", "--print", "--no-session-persistence", "--permission-mode", "dontAsk", "--permission-prompts", "none",
-				"--tools", "Read,Glob,Grep", "--add-dir", skillDirectory, promptByReviewer.Claude,
-			]),
+			command: capturedCommand(runnerPath, runDir, "Claude", [
+				"claude", "--print", "--name", `Skill review: ${skillName} (Claude)`, "--session-id", sessionIds.Claude!,
+				"--permission-mode", "dontAsk", "--permission-prompts", "none",
+				"--tools", "Read,Glob,Grep", "--add-dir", skillDirectory,
+			], "text", path.join(runDir, "prompts", "claude.md")),
 		},
 	];
+}
+
+export function buildConsolidationCommand(runnerPath: string, runDir: string): string {
+	return shellCommand(["node", runnerPath, "consolidate", runDir]);
 }
