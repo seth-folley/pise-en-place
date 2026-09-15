@@ -324,17 +324,17 @@
 </code></pre>
 <p>Uses <code>git</code> and authenticated GitHub CLI (<code>gh</code>) to find the pull request associated with the current branch, then displays its metadata. It is read-only and requires a Git repository with a GitHub remote.</p>
 <h3 id="jira-worktree"><code>/jira-worktree</code><a class="anchor" href="#jira-worktree" aria-label="Link to this section">#</a></h3>
-<pre><code class="language-text">/jira-worktree &lt;JIRA-KEY&gt;
+<pre><code class="language-text">/jira-worktree &lt;JIRA-KEY&gt; [--branch-suffix &lt;slug&gt;]
+/jira-worktree -h | --help
 </code></pre>
-<p>Requires interactive UI, a selected model, a Git repository, authenticated <code>acli</code>, <code>supacode</code>, and <code>pi</code> executables.</p>
+<p>Requires a Git repository and authenticated <code>acli</code>, <code>supacode</code>, and <code>pi</code> executables. Without <code>--branch-suffix</code>, it also requires interactive UI and a selected model.</p>
 <ol>
 <li>Reads the Jira item and repository root.</li>
-<li>Runs an isolated, no-tools Pi process to suggest concise branch slugs.</li>
-<li>Lets the user select or enter a slug.</li>
+<li>Uses the supplied branch suffix, or runs an isolated, no-tools Pi process to suggest concise suffixes and lets the user select or enter one.</li>
 <li>Creates a Supacode worktree using the package&#39;s branch convention.</li>
 <li>Opens a new Supacode tab with Pi started on the Jira context.</li>
 </ol>
-<p>This command creates a Git worktree and starts another Pi session.</p>
+<p>The suffix must contain lowercase letters and numbers joined by single hyphens, with a maximum of 48 characters. This command creates a Git worktree and starts another Pi session.</p>
 <h3 id="share-local"><code>/share-local</code><a class="anchor" href="#share-local" aria-label="Link to this section">#</a></h3>
 <pre><code class="language-text">/share-local [output-path]
 </code></pre>

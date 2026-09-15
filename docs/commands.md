@@ -311,18 +311,18 @@ Uses `git` and authenticated GitHub CLI (`gh`) to find the pull request associat
 ### `/jira-worktree`
 
 ```text
-/jira-worktree <JIRA-KEY>
+/jira-worktree <JIRA-KEY> [--branch-suffix <slug>]
+/jira-worktree -h | --help
 ```
 
-Requires interactive UI, a selected model, a Git repository, authenticated `acli`, `supacode`, and `pi` executables.
+Requires a Git repository and authenticated `acli`, `supacode`, and `pi` executables. Without `--branch-suffix`, it also requires interactive UI and a selected model.
 
 1. Reads the Jira item and repository root.
-2. Runs an isolated, no-tools Pi process to suggest concise branch slugs.
-3. Lets the user select or enter a slug.
-4. Creates a Supacode worktree using the package's branch convention.
-5. Opens a new Supacode tab with Pi started on the Jira context.
+2. Uses the supplied branch suffix, or runs an isolated, no-tools Pi process to suggest concise suffixes and lets the user select or enter one.
+3. Creates a Supacode worktree using the package's branch convention.
+4. Opens a new Supacode tab with Pi started on the Jira context.
 
-This command creates a Git worktree and starts another Pi session.
+The suffix must contain lowercase letters and numbers joined by single hyphens, with a maximum of 48 characters. This command creates a Git worktree and starts another Pi session.
 
 ### `/share-local`
 

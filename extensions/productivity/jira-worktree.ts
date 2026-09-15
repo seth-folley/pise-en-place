@@ -8,6 +8,13 @@ const jiraKeyPattern = /^[A-Z][A-Z0-9]+-\d+$/i;
 
 type CommandResult = { stdout: string; stderr: string };
 
+export type JiraWorktreeArguments = {
+	key?: string;
+	branchSuffix?: string;
+	help?: boolean;
+	error?: string;
+};
+
 type JiraStory = {
 	key: string;
 	title: string;
@@ -116,6 +123,44 @@ function validSlug(value: string): boolean {
 	return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value) && value.length <= 48;
 }
 
+function usageText(): string {
+	return [
+		"Usage:",
+		"  /jira-worktree <JIRA-KEY> [--branch-suffix <slug>]",
+		"  /jira-worktree -h | --help",
+		"",
+		"Without --branch-suffix, the command suggests branch suffixes and opens a chooser.",
+		"A suffix must use lowercase letters, numbers, and single hyphens, up to 48 characters.",
+	].join("\n");
+}
+
+export function parseJiraWorktreeArguments(input: string): JiraWorktreeArguments {
+	const tokens = input.trim() ? input.trim().split(/\s+/) : [];
+	if (tokens.includes("-h") || tokens.includes("--help")) return { help: true };
+
+	let key: string | undefined;
+	let branchSuffix: string | undefined;
+	for (let index = 0; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (token === "--branch-suffix" || token.startsWith("--branch-suffix=")) {
+			if (branchSuffix !== undefined) return { error: "--branch-suffix may only be supplied once." };
+			const value = token === "--branch-suffix" ? tokens[++index] : token.slice("--branch-suffix=".length);
+			if (!value || value.startsWith("--")) return { error: "--branch-suffix requires a slug." };
+			branchSuffix = value;
+			continue;
+		}
+		if (token.startsWith("-")) return { error: `Unknown option: ${token}` };
+		if (key) return { error: `Unexpected argument: ${token}` };
+		key = token.toUpperCase();
+	}
+
+	if (!key || !jiraKeyPattern.test(key)) return { error: "A valid Jira key is required (for example, IOSDOX-27280)." };
+	if (branchSuffix !== undefined && !validSlug(branchSuffix)) {
+		return { error: "Branch suffix must use lowercase letters, numbers, and single hyphens only, and be at most 48 characters." };
+	}
+	return { key, branchSuffix };
+}
+
 function slugPrompt(story: JiraStory): string {
 	return [
 		"Suggest exactly three concise git branch slugs for the Jira work item below.",
@@ -202,17 +247,18 @@ async function startPiInWorktree(cwd: string, worktreeID: string, story: JiraSto
 
 export default function jiraWorktreeExtension(pi: ExtensionAPI) {
 	pi.registerCommand("jira-worktree", {
-		description: "Load a Jira story, select an agent-suggested or custom branch slug, and create a Supacode worktree.",
+		description: "Load a Jira story and create a Supacode worktree with a supplied or selected branch suffix.",
 		handler: async (args, ctx) => {
-			const key = args.trim().toUpperCase();
-			if (!jiraKeyPattern.test(key)) {
-				ctx.ui.notify("Usage: /jira-worktree <JIRA-KEY> (for example, /jira-worktree IOSDOX-27280)", "error");
+			const parsed = parseJiraWorktreeArguments(args);
+			if (parsed.help) {
+				ctx.ui.notify(usageText(), "info");
 				return;
 			}
-			if (!ctx.hasUI) {
-				ctx.ui.notify("/jira-worktree requires interactive UI so it can confirm the branch before creation.", "error");
+			if (parsed.error || !parsed.key) {
+				ctx.ui.notify(`${parsed.error ?? "Invalid arguments."}\n\n${usageText()}`, "error");
 				return;
 			}
+			const { key, branchSuffix } = parsed;
 
 			let story: JiraStory;
 			let root: string;
@@ -228,70 +274,77 @@ export default function jiraWorktreeExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			if (!ctx.model) {
-				ctx.ui.notify("No model is selected for branch slug suggestions.", "error");
-				return;
-			}
-
-			let suggestions: string[];
-			try {
-				ctx.ui.notify(`Generating concise branch names for ${story.key}...`, "info");
-				const result = await pi.exec(
-					"pi",
-					[
-						"--print",
-						"--no-session",
-						"--no-extensions",
-						"--no-skills",
-						"--no-prompt-templates",
-						"--no-themes",
-						"--no-context-files",
-						"--no-tools",
-						"--provider",
-						ctx.model.provider,
-						"--model",
-						ctx.model.id,
-						[
-							"You name git branches. Follow the requested output format exactly.",
-							"Do not investigate the repository or request more context.",
-							"You have no tools and must answer only from the supplied Jira context.",
-							"",
-							slugPrompt(story),
-						].join("\n"),
-					],
-					{ cwd: ctx.cwd, timeout: 60_000 },
-				);
-				if (result.code !== 0) {
-					throw new Error(result.stderr?.trim() || result.stdout?.trim() || "The isolated naming agent failed.");
-				}
-				suggestions = parseSlugSuggestions(result.stdout ?? "");
-			} catch (error) {
-				ctx.ui.notify(`Unable to generate branch names: ${commandError(error)}`, "error");
-				return;
-			}
-
 			const branchType = branchTypeFor(story.issueType);
-			const answers = await askQuestionnaire<string>(ctx, {
-				title: `Branch name for ${story.key}`,
-				questions: [{
-					id: "slug",
-					label: "Branch",
-					question: `Choose the slug for sf/${branchType}/${story.key}/`,
-					multiple: false,
-					allowOther: true,
-					otherLabel: "Custom slug…",
-					options: suggestions.map((suggestion, index) => ({
-						label: suggestion,
-						value: suggestion,
-						selected: index === 0,
-					})),
-				}],
-			});
-			const slugName = String(answers[0]?.selected[0] ?? "").trim();
-			if (!slugName) return;
-			if (!validSlug(slugName)) {
-				ctx.ui.notify("Slug must use lowercase letters, numbers, and single hyphens only, and be at most 48 characters.", "error");
-				return;
+			let slugName = branchSuffix;
+			if (!slugName) {
+				if (!ctx.hasUI) {
+					ctx.ui.notify("/jira-worktree requires interactive UI when --branch-suffix is omitted.", "error");
+					return;
+				}
+				if (!ctx.model) {
+					ctx.ui.notify("No model is selected for branch suffix suggestions.", "error");
+					return;
+				}
+
+				let suggestions: string[];
+				try {
+					ctx.ui.notify(`Generating concise branch names for ${story.key}...`, "info");
+					const result = await pi.exec(
+						"pi",
+						[
+							"--print",
+							"--no-session",
+							"--no-extensions",
+							"--no-skills",
+							"--no-prompt-templates",
+							"--no-themes",
+							"--no-context-files",
+							"--no-tools",
+							"--provider",
+							ctx.model.provider,
+							"--model",
+							ctx.model.id,
+							[
+								"You name git branches. Follow the requested output format exactly.",
+								"Do not investigate the repository or request more context.",
+								"You have no tools and must answer only from the supplied Jira context.",
+								"",
+								slugPrompt(story),
+							].join("\n"),
+						],
+						{ cwd: ctx.cwd, timeout: 60_000 },
+					);
+					if (result.code !== 0) {
+						throw new Error(result.stderr?.trim() || result.stdout?.trim() || "The isolated naming agent failed.");
+					}
+					suggestions = parseSlugSuggestions(result.stdout ?? "");
+				} catch (error) {
+					ctx.ui.notify(`Unable to generate branch names: ${commandError(error)}`, "error");
+					return;
+				}
+
+				const answers = await askQuestionnaire<string>(ctx, {
+					title: `Branch name for ${story.key}`,
+					questions: [{
+						id: "slug",
+						label: "Branch",
+						question: `Choose the slug for sf/${branchType}/${story.key}/`,
+						multiple: false,
+						allowOther: true,
+						otherLabel: "Custom slug…",
+						options: suggestions.map((suggestion, index) => ({
+							label: suggestion,
+							value: suggestion,
+							selected: index === 0,
+						})),
+					}],
+				});
+				slugName = String(answers[0]?.selected[0] ?? "").trim();
+				if (!slugName) return;
+				if (!validSlug(slugName)) {
+					ctx.ui.notify("Slug must use lowercase letters, numbers, and single hyphens only, and be at most 48 characters.", "error");
+					return;
+				}
 			}
 
 			const proposal = worktreeProposal(story, branchType, slugName);

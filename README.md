@@ -101,7 +101,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 ### Productivity helpers
 
 - `extensions/productivity/current-pr.ts` adds `/pr` and the `get_current_branch_pr` tool for GitHub PR lookup via `gh`.
-- `extensions/productivity/jira-worktree.ts` adds `/jira-worktree <JIRA-KEY>`: it reads the story through authenticated `acli`, uses an isolated no-tools Pi agent to propose concise branch slugs, presents them in an `ask_user`-style chooser with custom input, then immediately creates a Supacode worktree and starts Pi there with a concise ticket brief.
+- `extensions/productivity/jira-worktree.ts` adds `/jira-worktree <JIRA-KEY> [--branch-suffix <slug>]`: it reads the story through authenticated `acli`, uses the supplied suffix or asks an isolated no-tools Pi agent for concise options, then creates a Supacode worktree and starts Pi there with a concise ticket brief. Use `-h` or `--help` for command help.
 - `extensions/productivity/context.ts` adds `/context` status and `/context project config` for project-specific context-file and skill filtering, plus private project guidance injection.
 - See `docs/private-guidance.md` for configuring per-project `additional_guidance` files.
 - `extensions/productivity/todos.ts` adds `/todos`, the `todo` tool, and a session-scoped todo widget.
