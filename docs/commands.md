@@ -39,7 +39,7 @@ After changing or installing extensions, run Pi's built-in `/reload` command.
 /skill-review --help
 ```
 
-Opens a new tab in the current Supacode worktree with independent, read-only, one-shot Pi, Codex, and Claude reviews plus an automatic consolidated review in a fourth pane. Each reviewer keeps its normal native CLI session so the session can be revisited later. The command does not edit the skill.
+Opens a new tab in the current Supacode worktree with independent, read-only, one-shot Pi, Codex, and Claude reviews plus an automatic consolidated review in a fourth pane. Each reviewer keeps its normal native CLI session so the session can be revisited later. The command does not edit the skill. Tab completion suggests currently loaded skills by name and shows their descriptions; entering an absolute path continues to use normal path completion.
 
 The read-only `skill_review_prompt` agent tool resolves a skill and returns the exact prompts this command would send without launching reviewers. Agents are instructed to use it before asking for additional focus areas or proposing a replacement prompt. It accepts `skill` plus optional `focus` and `promptPath` parameters.
 
@@ -58,6 +58,8 @@ Every invocation creates a private retained run under:
   claude.md
   consolidated.md
 ```
+
+The activating Pi session displays a live above-editor report while the run is active. It shows Pi, Codex, and Claude as working, finished, failed, or timed out, then shows when consolidation is waiting, working, or finished. The final complete or partial report remains visible until another skill review starts or the session reloads.
 
 The exact reviewer and consolidator prompts are retained under `prompts/`. Reviewer stderr logs and status JSON files are retained alongside the outputs. `run.json` records the resolved skill, prompt options, artifact paths, reviewer outcomes, native session IDs and files, effective model/provider metadata, and overall completion status. Pi and Claude session IDs are assigned before launch; Codex's thread ID is captured from its structured event stream. The consolidation pane waits up to 30 minutes for all reviewers to settle, notes failures or timeouts, verifies findings against the skill, and produces a deduplicated prioritized action plan. Reviewer output is both displayed in its pane and captured in the run directory.
 

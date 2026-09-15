@@ -1,16 +1,19 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionCommandContext, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import { type AutocompleteItem, Key, matchesKey, Text } from "@earendil-works/pi-tui";
 import { fileURLToPath } from "node:url";
 import { parseImproveSkillArguments, readCustomPrompt, skillReviewHelpText } from "./arguments.ts";
 import { buildConsolidationCommand, buildLaunchPlans, safeTabTitle } from "./launcher.ts";
 import { buildReviewPrompt, formatReviewPrompts, type Reviewer } from "./prompt.ts";
 import { resolveSkill } from "./resolver.ts";
 import { createSkillReviewRun, recordReviewerLaunchFailure, recordRunLaunchFailure, writeSkillReviewPrompts } from "./run.ts";
+import { formatSkillReviewProgress, readSkillReviewProgress } from "./status.ts";
 import { registerSkillReviewPromptTool } from "./tool.ts";
 
 const reviewRunnerPath = fileURLToPath(new URL("./review-runner.mjs", import.meta.url));
 
 const controlTimeoutMs = 15_000;
+const reviewStatusPollMs = 2_000;
+const reviewStatusWidgetId = "skill-review-status";
 const requiredSupacodeEnvironment = [
 	"SUPACODE_WORKTREE_ID",
 	"SUPACODE_TAB_ID",
@@ -34,6 +37,26 @@ function resourceID(result: CommandResult, action: string): string {
 	const id = result.stdout.trim().split(/\s+/)[0];
 	if (!id) throw new Error(`${action} did not return an ID.`);
 	return id;
+}
+
+function loadedSkillCommands(commands: SlashCommandInfo[]) {
+	return commands
+		.filter((command) => command.source === "skill" && command.name.startsWith("skill:"))
+		.map((command) => ({
+			name: command.name.slice("skill:".length),
+			entryPath: command.sourceInfo.path,
+			description: command.description,
+		}));
+}
+
+export function skillReviewArgumentCompletions(prefix: string, commands: SlashCommandInfo[]): AutocompleteItem[] | null {
+	const input = prefix.trimStart();
+	if (/\s/.test(input) || input.startsWith("/") || input.startsWith("--")) return null;
+
+	const items = loadedSkillCommands(commands)
+		.filter((skill) => skill.name.startsWith(input))
+		.map((skill) => ({ value: skill.name, label: skill.name, description: skill.description }));
+	return items.length > 0 ? items : null;
 }
 
 /** Verifies the current Supacode worktree and reviewer executables before launch. */
@@ -68,9 +91,41 @@ async function showPromptPreview(ctx: ExtensionCommandContext, title: string, pr
 }
 
 export default function improveSkillExtension(pi: ExtensionAPI) {
+	let stopStatusMonitor: (() => void) | undefined;
+
+	function monitorReviewStatus(ctx: ExtensionCommandContext, runDir: string) {
+		stopStatusMonitor?.();
+		let stopped = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		stopStatusMonitor = () => {
+			stopped = true;
+			if (timer) clearTimeout(timer);
+		};
+
+		const refresh = async () => {
+			try {
+				const progress = await readSkillReviewProgress(runDir);
+				if (stopped) return;
+				ctx.ui.setWidget(reviewStatusWidgetId, formatSkillReviewProgress(progress), { placement: "aboveEditor" });
+				if (progress.terminal) return;
+			} catch (error) {
+				if (stopped) return;
+				ctx.ui.setWidget(reviewStatusWidgetId, ["Skill review status unavailable", errorMessage(error)], { placement: "aboveEditor" });
+			}
+			timer = setTimeout(() => void refresh(), reviewStatusPollMs);
+		};
+		void refresh();
+	}
+
+	pi.on("session_shutdown", (_event, ctx) => {
+		stopStatusMonitor?.();
+		ctx.ui.setWidget(reviewStatusWidgetId, undefined);
+	});
+
 	registerSkillReviewPromptTool(pi);
 	pi.registerCommand("skill-review", {
 		description: "Open independent read-only Pi, Codex, and Claude reviews for a skill",
+		getArgumentCompletions: (prefix) => skillReviewArgumentCompletions(prefix, pi.getCommands()),
 		handler: async (args, ctx) => {
 			if (ctx.mode !== "tui" || !ctx.hasUI) {
 				ctx.ui.notify("/skill-review requires Pi's interactive TUI.", "error");
@@ -107,7 +162,8 @@ export default function improveSkillExtension(pi: ExtensionAPI) {
 
 			let skill: Awaited<ReturnType<typeof resolveSkill>>;
 			try {
-				skill = await resolveSkill(parsed.skillArgument, repositoryRoot);
+				const loadedSkills = loadedSkillCommands(pi.getCommands()).map(({ name, entryPath }) => ({ name, entryPath }));
+				skill = await resolveSkill(parsed.skillArgument, repositoryRoot, undefined, loadedSkills);
 			} catch (error) {
 				ctx.ui.notify(errorMessage(error), "error");
 				return;
@@ -164,6 +220,7 @@ export default function improveSkillExtension(pi: ExtensionAPI) {
 			}
 
 			const { runDir, record } = reviewRun;
+			monitorReviewStatus(ctx, runDir);
 			const plans = buildLaunchPlans(repositoryRoot, skill.directory, runDir, reviewRunnerPath, skill.name, {
 				Pi: record.reviewers.Pi.sessionId,
 				Codex: record.reviewers.Codex.sessionId,
@@ -172,7 +229,7 @@ export default function improveSkillExtension(pi: ExtensionAPI) {
 			ctx.ui.notify(`Starting independent Pi, Codex, and Claude reviews of ${skill.name}…\nRun: ${runDir}`, "info");
 
 			let tabID: string | undefined;
-			let reviewerStarted = false;
+			const startedReviewers = new Set<Reviewer>();
 			const launchFailures: Reviewer[] = [];
 			try {
 				tabID = resourceID(await run("supacode", ["tab", "new", "-w", worktreeID, "--title", safeTabTitle(skill.name)]), "Creating review tab");
@@ -189,7 +246,7 @@ export default function improveSkillExtension(pi: ExtensionAPI) {
 						launchFailures.push(plan.reviewer);
 						continue;
 					}
-					reviewerStarted = true;
+					startedReviewers.add(plan.reviewer);
 				}
 				const consolidation = await run("supacode", ["surface", "focus", "-w", worktreeID, "-t", tabID, "-s", consolidatedSurfaceID, "-i", buildConsolidationCommand(reviewRunnerPath, runDir)]);
 				if (consolidation.code !== 0) throw new Error(`Starting consolidation failed: ${output(consolidation) || `exit ${consolidation.code}`}`);
@@ -198,11 +255,15 @@ export default function improveSkillExtension(pi: ExtensionAPI) {
 			} catch (error) {
 				const launchError = errorMessage(error);
 				try {
+					const reviewersNotLaunched = (["Pi", "Codex", "Claude"] as Reviewer[])
+						.filter((reviewer) => !startedReviewers.has(reviewer) && !launchFailures.includes(reviewer));
+					await Promise.all(reviewersNotLaunched.map((reviewer) =>
+						recordReviewerLaunchFailure(runDir, reviewer, `Reviewer was not launched: ${launchError}`)));
 					await recordRunLaunchFailure(runDir, launchError);
 				} catch {
 					// Keep the original launch error as the primary diagnostic.
 				}
-				if (tabID && !reviewerStarted) {
+				if (tabID && startedReviewers.size === 0) {
 					try {
 						await run("supacode", ["tab", "close", "-w", worktreeID, "-t", tabID, "--background"]);
 					} catch {

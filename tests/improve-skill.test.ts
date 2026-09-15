@@ -1,17 +1,18 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseImproveSkillArguments, readCustomPrompt, skillReviewHelpText } from "../extensions/skills/improve-skill/arguments.ts";
 import { buildConsolidationCommand, buildLaunchPlans, safeTabTitle, shellQuote } from "../extensions/skills/improve-skill/launcher.ts";
 import { buildReviewPrompt, formatReviewPrompts } from "../extensions/skills/improve-skill/prompt.ts";
-import { classifySkillArgument, resolveNamedSkill, resolveSkillPath } from "../extensions/skills/improve-skill/resolver.ts";
+import { classifySkillArgument, resolveNamedSkill, resolveSkill, resolveSkillPath } from "../extensions/skills/improve-skill/resolver.ts";
 import { createSkillReviewRun, createSkillReviewRunId, recordReviewerLaunchFailure, recordRunLaunchFailure, safeSkillDirectoryName, writeSkillReviewPrompts } from "../extensions/skills/improve-skill/run.ts";
+import { formatSkillReviewProgress, readSkillReviewProgress } from "../extensions/skills/improve-skill/status.ts";
 import { buildSkillReviewPromptPreview, registerSkillReviewPromptTool } from "../extensions/skills/improve-skill/tool.ts";
-import { verifyReviewPrerequisites } from "../extensions/skills/improve-skill/index.ts";
+import { skillReviewArgumentCompletions, verifyReviewPrerequisites } from "../extensions/skills/improve-skill/index.ts";
 
 const temporaryDirectories: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -76,11 +77,63 @@ describe("improve-skill resolution", () => {
 		expect((await resolveSkillPath(link)).directory).toBe(skill);
 	});
 
+	it("uses Pi's loaded skill path before filesystem fallbacks", async () => {
+		const root = await temporaryDirectory();
+		const global = await temporaryDirectory();
+		await addSkill(root, "skills/example", "local");
+		const loadedEntry = join(global, "loaded-skill.md");
+		await writeFile(loadedEntry, "loaded");
+
+		const resolved = await resolveSkill(
+			"example",
+			root,
+			undefined,
+			[{ name: "example", entryPath: loadedEntry }],
+		);
+		expect(resolved).toMatchObject({ name: "example", entryPath: await realpath(loadedEntry) });
+	});
+
 	it("rejects empty, relative, and invalid bare inputs", () => {
 		expect(() => classifySkillArgument("")).toThrow("Usage");
 		expect(() => classifySkillArgument("skills/example")).toThrow("absolute");
 		expect(() => classifySkillArgument("../example")).toThrow("absolute");
 		expect(() => classifySkillArgument("bad name")).toThrow("Skill names");
+	});
+});
+
+describe("improve-skill autocomplete", () => {
+	const commands = [
+		{
+			name: "skill:swift-concurrency",
+			description: "Diagnose Swift concurrency issues",
+			source: "skill",
+			sourceInfo: { path: "/skills/swift-concurrency/SKILL.md", source: "test", scope: "user", origin: "top-level" },
+		},
+		{
+			name: "skill:swiftui-expert-skill",
+			description: "Review SwiftUI code",
+			source: "skill",
+			sourceInfo: { path: "/skills/swiftui-expert-skill/SKILL.md", source: "test", scope: "user", origin: "top-level" },
+		},
+		{
+			name: "skill-review",
+			description: "Not a skill",
+			source: "extension",
+			sourceInfo: { path: "/extension.ts", source: "test", scope: "user", origin: "top-level" },
+		},
+	] as SlashCommandInfo[];
+
+	it("suggests loaded skills by bare name and preserves descriptions", () => {
+		expect(skillReviewArgumentCompletions("swift-c", commands)).toEqual([
+			{ value: "swift-concurrency", label: "swift-concurrency", description: "Diagnose Swift concurrency issues" },
+		]);
+		expect(skillReviewArgumentCompletions("", commands)).toHaveLength(2);
+	});
+
+	it("defers to normal completion for paths, options, and later arguments", () => {
+		expect(skillReviewArgumentCompletions("/tmp/skill", commands)).toBeNull();
+		expect(skillReviewArgumentCompletions("--show", commands)).toBeNull();
+		expect(skillReviewArgumentCompletions("swift-concurrency --", commands)).toBeNull();
 	});
 });
 
@@ -156,6 +209,35 @@ describe("skill-review prompt tool", () => {
 		expect(custom.text).toContain("Custom review instructions.\n\n## Additional review focus\n\nCheck migrations.");
 		expect(custom.details).toMatchObject({ focus: "Check migrations." });
 		await expect(buildSkillReviewPromptPreview({ skill: "example", focus: "   " }, root, root)).rejects.toThrow("non-empty");
+	});
+});
+
+describe("improve-skill status", () => {
+	it("reports reviewer work, consolidation, and the retained final state", async () => {
+		const root = await temporaryDirectory();
+		const skill = { name: "example", directory: "/skill", entryPath: "/skill/SKILL.md" };
+		const { runDir } = await createSkillReviewRun(skill, "/repo", {}, root);
+
+		const running = await readSkillReviewProgress(runDir);
+		expect(running.reviewers).toEqual({ Pi: "working", Codex: "working", Claude: "working" });
+		expect(running.consolidation).toBe("waiting");
+		expect(running.terminal).toBe(false);
+
+		await Promise.all(["pi", "codex", "claude"].map((name) => writeFile(
+			join(runDir, `${name}.status.json`),
+			JSON.stringify({ status: "complete" }),
+		)));
+		const manifestPath = join(runDir, "run.json");
+		const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+		await writeFile(manifestPath, JSON.stringify({ ...manifest, status: "consolidating" }));
+		const consolidating = await readSkillReviewProgress(runDir);
+		expect(consolidating.consolidation).toBe("working");
+
+		await writeFile(join(runDir, "consolidated.status.json"), JSON.stringify({ status: "complete" }));
+		await writeFile(manifestPath, JSON.stringify({ ...manifest, status: "complete" }));
+		const complete = await readSkillReviewProgress(runDir);
+		expect(complete.terminal).toBe(true);
+		expect(formatSkillReviewProgress(complete)).toContain("Consolidation: ✓ finished");
 	});
 });
 

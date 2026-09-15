@@ -9,6 +9,11 @@ export type ResolvedSkill = {
 	entryPath: string;
 };
 
+export type LoadedSkill = {
+	name: string;
+	entryPath: string;
+};
+
 const skillNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export function classifySkillArgument(value: string): { kind: "name" | "path"; value: string } {
@@ -59,6 +64,12 @@ export async function resolveNamedSkill(name: string, repositoryRoot: string, ag
 	throw new Error(`Could not find a readable SKILL.md for "${name}". Checked:\n${candidates.map((path) => `- ${path}`).join("\n")}`);
 }
 
+async function resolveLoadedSkill(skill: LoadedSkill): Promise<ResolvedSkill | undefined> {
+	if (!await readableFile(skill.entryPath)) return undefined;
+	const canonicalEntry = await realpath(skill.entryPath);
+	return { name: skill.name, directory: dirname(canonicalEntry), entryPath: canonicalEntry };
+}
+
 export async function resolveSkillPath(inputPath: string): Promise<ResolvedSkill> {
 	let canonicalPath: string;
 	try {
@@ -80,9 +91,16 @@ export async function resolveSkillPath(inputPath: string): Promise<ResolvedSkill
 	return resolved;
 }
 
-export async function resolveSkill(input: string, repositoryRoot: string, agentsSkillsDirectory?: string): Promise<ResolvedSkill> {
+export async function resolveSkill(
+	input: string,
+	repositoryRoot: string,
+	agentsSkillsDirectory?: string,
+	loadedSkills: LoadedSkill[] = [],
+): Promise<ResolvedSkill> {
 	const argument = classifySkillArgument(input);
-	return argument.kind === "name"
-		? resolveNamedSkill(argument.value, repositoryRoot, agentsSkillsDirectory)
-		: resolveSkillPath(argument.value);
+	if (argument.kind === "path") return resolveSkillPath(argument.value);
+
+	const loaded = loadedSkills.find((skill) => skill.name === argument.value);
+	const resolvedLoaded = loaded ? await resolveLoadedSkill(loaded) : undefined;
+	return resolvedLoaded ?? resolveNamedSkill(argument.value, repositoryRoot, agentsSkillsDirectory);
 }
