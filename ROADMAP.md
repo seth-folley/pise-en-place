@@ -31,7 +31,7 @@ A lightweight place to track what has been added, what is next, and longer-term 
 
 ### Skill updates
 
-- **Skill update command** — Adds startup skill update checks and `/update-skills` flows, including an interactive picker.
+- **Skill update command** — Adds startup skill update checks and `/skillz` flows, including an interactive picker.
 
 ### Shared interaction components
 

@@ -7,9 +7,18 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { Message } from "@earendil-works/pi-ai";
 import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getDisabledSkillDirectories, type DisabledSkillDirectory } from "../../../src/shared/disabled-skill-access.ts";
+import {
+    isSkillBlockingDisabled,
+    isSkillBlockingSessionChanged,
+    resetSkillBlockingSession,
+    setSkillBlockingDisabled,
+    skillBlockingSessionChangedEvent,
+} from "../../../src/shared/skill-blocking-session.ts";
 import { getUsageSessionState, inheritedUsageTagsEnvironmentVariable } from "../../../src/shared/usage-session.ts";
 import { Type } from "typebox";
 import { getSubagentDefinitions, type SubagentDefinition } from "./agents.ts";
+import { disabledSkillDirectoriesEnvironmentVariable } from "./disabled-skill-guard.ts";
 import { loadSubagentConfig, type ResolvedSubagentConfig } from "./config.ts";
 import { createSubagentWidget } from "./widget.ts";
 import { formatSubagentSessionRuns, getSubagentSessionRuns, subagentSessionEntryType, type SubagentSessionRun } from "./sessions.ts";
@@ -76,6 +85,7 @@ async function runSubagent(
     config: ResolvedSubagentConfig,
     sessionDir: string,
     inheritedTags: string[],
+    disabledSkillDirectories: DisabledSkillDirectory[],
     signal: AbortSignal | undefined,
     update: (result: Result) => void,
 ): Promise<Result> {
@@ -99,7 +109,9 @@ async function runSubagent(
     try {
         const args = [
             "--mode", "json", "--print", "--session-dir", sessionDir, "--session-id", childSessionId, "--name", `subagent: ${definition.name}`,
-            "--no-extensions", "--extension", path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../usage/index.ts"),
+            "--no-extensions",
+            "--extension", path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../usage/index.ts"),
+            "--extension", path.resolve(path.dirname(fileURLToPath(import.meta.url)), "disabled-skill-guard.ts"),
             "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
             "--model", config.model, "--thinking", config.thinking, "--tools", definition.tools.join(","),
             "--append-system-prompt", promptPath, `Task: ${task}`,
@@ -110,7 +122,11 @@ async function runSubagent(
                 cwd,
                 shell: false,
                 stdio: ["ignore", "pipe", "pipe"],
-                env: { ...process.env, [inheritedUsageTagsEnvironmentVariable]: JSON.stringify([...inheritedTags, "subagent", `subagent-${definition.name}`]) },
+                env: {
+                    ...process.env,
+                    [inheritedUsageTagsEnvironmentVariable]: JSON.stringify([...inheritedTags, "subagent", `subagent-${definition.name}`]),
+                    [disabledSkillDirectoriesEnvironmentVariable]: JSON.stringify(disabledSkillDirectories),
+                },
             });
             let stdout = "";
             let aborted = false;
@@ -170,6 +186,16 @@ async function mapConcurrent<T>(items: T[], fn: (item: T, index: number) => Prom
 export default function (pi: ExtensionAPI) {
     const widgetRuns = new Map<string, Result[]>();
 
+    pi.events.on(skillBlockingSessionChangedEvent, (change: unknown) => {
+        if (isSkillBlockingSessionChanged(change)) {
+            setSkillBlockingDisabled(change.sessionManager, change.disabled);
+        }
+    });
+
+    pi.on("session_start", (_event, ctx) => {
+        resetSkillBlockingSession(ctx.sessionManager);
+    });
+
     const renderWidget = (ctx: any) => {
         if (!ctx.hasUI) return;
         const items = [...widgetRuns.values()].flat();
@@ -215,6 +241,9 @@ export default function (pi: ExtensionAPI) {
             const parentSessionId = ctx.sessionManager.getSessionId();
             const childSessionDir = path.join(getAgentDir(), "subagent-sessions", parentSessionId);
             const inheritedTags = getUsageSessionState(ctx.sessionManager.getBranch())?.tags ?? [];
+            const disabledSkillDirectories = isSkillBlockingDisabled(ctx.sessionManager)
+                ? []
+                : getDisabledSkillDirectories(ctx.cwd);
             const results: Result[] = tasks.map(({ agent, task }) => ({ agent, task, output: "", stderr: "", exitCode: -1, activity: "starting" }));
             widgetRuns.set(toolCallId, results);
             renderWidget(ctx);
@@ -230,7 +259,7 @@ export default function (pi: ExtensionAPI) {
             await mapConcurrent(tasks, async (task, index) => {
                 const definition = definitions.get(task.agent)!;
                 const config = loadSubagentConfig(ctx.cwd, definition.name, definition.defaults);
-                results[index] = await runSubagent(definition, task.task, ctx.cwd, config, childSessionDir, inheritedTags, signal, (partial) => { results[index] = { ...partial }; reportProgress(); });
+                results[index] = await runSubagent(definition, task.task, ctx.cwd, config, childSessionDir, inheritedTags, disabledSkillDirectories, signal, (partial) => { results[index] = { ...partial }; reportProgress(); });
                 const result = results[index];
                 if (result.childSessionId && result.childSessionDir && result.startedAt) {
                     const run: SubagentSessionRun = {

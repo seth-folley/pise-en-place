@@ -9,7 +9,7 @@ After changing or installing extensions, run Pi's built-in `/reload` command.
 | Command | Purpose |
 | --- | --- |
 | [`/usage`](#usage) | Usage ledger reports, Codex subscription limits, session tags, and skill-read reports |
-| [`/update-skills`](#update-skills) | Check, select, and install agent skill updates |
+| [`/skillz`](#skillz) | Check, select, and install agent skill updates |
 | [`/skill-review`](#skill-review) | Retain independent skill reviews and automatically consolidate them |
 | [`/skill-eval`](#skill-eval) | Validate, run, and review skill evaluations |
 | [`/subagents`](#subagents) | List retained child sessions created by the subagent tool |
@@ -172,21 +172,28 @@ Deletes `~/.pi/agent/usage/ledger.jsonl`. Interactive use asks for confirmation;
 
 Most `/usage` outputs support `--json`. See [usage tracking](usage-tracking.md) and [skill-read tracking](skill-read-tracking.md) for the complete data model and privacy details.
 
-### `/update-skills`
+### `/skillz`
 
 ```text
-/update-skills
-/update-skills --check
-/update-skills --interactive
-/update-skills --respect-interval
+/skillz update [--respect-interval]
+/skillz check
+/skillz interactive
+/skillz disable <skill_path>
+/skillz disable --list
+/skillz session --disable
+/skillz session --enable
+/skillz --help
 ```
 
-Aliases `check`/`-c` and `interactive`/`-i` are accepted.
+`--help` and `-h` are accepted by the command and each subcommand.
 
-- No option: runs the local skill sync script with `--force`.
-- `--respect-interval`: runs the sync script without forcing its configured interval.
-- `--check`: checks version-pinned manifest sources for newer refs without installing them.
-- `--interactive`: requires interactive UI, opens a selector, updates accepted manifest refs, and syncs the selected changes.
+- `update`: runs the local skill sync script with `--force` by default. Pass `--respect-interval` to honor its configured interval instead.
+- `check`: checks version-pinned manifest sources for newer refs without installing them.
+- `interactive`: requires interactive UI, opens a selector, updates accepted manifest refs, and syncs the selected changes.
+- `disable <skill_path>`: accepts a project-local skill directory or `SKILL.md` path and adds its skill name to the current project's existing context-filter ignore list in `~/.pi/agent/settings.json`. Tab completion suggests currently discovered project skill directories by name and path. It removes the skill from model context and blocks `/skill:<name>`, direct Pi file tools, and literal shell references to every file within that skill directory. Pi may still discover it and expose its command in the startup UI. This is workflow enforcement, not an OS security sandbox against arbitrary or obfuscated shell access.
+- `disable --list`: lists managed skills with `enabled: false` in `~/.agents/skills/manifest.json` and the effective disabled skills for the current Git project.
+- `session --disable`: bypasses all project disabled-skill filtering and access guards for the current in-memory session and shows `skillz: blocking off` above the editor. Disabled skills return to model context, `/skill:<name>` works, and direct file, shell, and subagent access is allowed. The override resets on `/reload`, `/new`, `/resume`, `/fork`, or process restart and does not modify settings.
+- `session --enable`: restores disabled-skill filtering and access guards immediately.
 
 The extension also checks pinned versions once at normal session startup, but skips duplicate checks on `/reload`. It uses `~/.agents/skills/manifest.json` by default and delegates mutations/install work to the scripts under `~/.agents/scripts/`.
 

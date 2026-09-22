@@ -368,7 +368,16 @@ describe("improve-skill launch construction", () => {
 
 	it("builds default, focused, custom, and preview prompts", () => {
 		const skill = { name: "example", directory: "/skill", entryPath: "/skill/SKILL.md" };
-		expect(buildReviewPrompt("Pi", skill)).toContain("specifically in Pi");
+		const piPrompt = buildReviewPrompt("Pi", skill);
+		expect(piPrompt).toMatch(/^You are the Pi reviewer/);
+		expect(piPrompt).toMatch(/material verification gaps\.$/);
+		expect(piPrompt).toContain("specifically in Pi");
+		expect(piPrompt).toContain("read that skill's SKILL.md and relevant referenced guidance");
+		expect(piPrompt).toContain("Keep those related skills in scope for relationship analysis only");
+		expect(piPrompt).toContain("normally no more than 8");
+		expect(piPrompt).toContain("Critical: makes a central workflow unsafe");
+		expect(piPrompt).toContain("Report each issue exactly once");
+		expect(piPrompt).toContain("## Coverage and limitations");
 		expect(buildReviewPrompt("Codex", skill)).toContain("Review the skill at: /skill");
 		expect(buildReviewPrompt("Pi", skill, { focus: "Check edge cases." })).toContain("## Additional review focus\n\nCheck edge cases.");
 		expect(buildReviewPrompt("Claude", skill, { customPrompt: "Custom prompt", focus: "Focus here" })).toBe(

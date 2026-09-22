@@ -48,9 +48,13 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 ### Skill upkeep
 
 - `extensions/skills/update-agent-skills.ts` reads the skills manifest and checks pinned agent skills for newer tags at session start; each remote check times out after 10 seconds.
-- `/update-skills --check` lists available updates.
-- `/update-skills --interactive` lets the user choose updates, pins accepted refs, and syncs skills.
-- `/update-skills` syncs skills through the shared shell scripts.
+- `/skillz check` lists available updates.
+- `/skillz interactive` lets the user choose updates, pins accepted refs, and syncs skills.
+- `/skillz update` syncs skills through the shared shell scripts.
+- `/skillz disable <skill_path>` blocks a project-local skill and its supporting files from normal Pi skill-loading workflows for the current project; Tab completion suggests discovered project skill paths. This is workflow enforcement, not an OS security sandbox against arbitrary or obfuscated shell access.
+- `/skillz disable --list` shows globally disabled managed skills and effective disabled skills for the current project.
+- `/skillz session --disable` bypasses all disabled-skill context, command, file, shell, and subagent guards in memory until reload or session replacement and shows `skillz: blocking off` above the editor; `/skillz session --enable` restores them without changing settings.
+- `/skillz --help` and each subcommand's `--help`/`-h` option show usage details.
 - `/skill-review <name-or-absolute-path>` opens a current-worktree Supacode tab with independent read-only Pi, Codex, and Claude reviews plus automatic consolidation. Tab completion suggests currently loaded skills by name while preserving normal absolute-path completion. The activating Pi session keeps an above-editor status report showing each reviewer’s progress and the consolidation phase through completion. Reviewer sessions remain available in their native CLIs, and outputs are retained under `~/.pi/agent/skill-reviews/<skill-name>/<run-id>/`. Use `--focus` to append review criteria, `--prompt <file.md>` to replace the built-in prompt, `--show-prompt` to preview the exact composed prompts, or `--help` for command usage. The read-only `skill_review_prompt` tool gives agents the exact composed prompts before launch.
 
 ### Skill evaluation

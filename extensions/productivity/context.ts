@@ -17,9 +17,25 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { getAgentDir, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import {
+	contextFilterChangedEvent,
+	getDisabledProjectSkills,
+	loadContextFilterConfig,
+	saveContextFilterProjectRule,
+	type ContextFileFilterConfig,
+	type ProjectRule,
+} from "../../src/shared/context-filter-config.ts";
+import { disabledSkillForBashCommand, disabledSkillForPath, getDisabledSkillDirectories } from "../../src/shared/disabled-skill-access.ts";
+import {
+	isSkillBlockingDisabled,
+	isSkillBlockingSessionChanged,
+	resetSkillBlockingSession,
+	setSkillBlockingDisabled,
+	skillBlockingSessionChangedEvent,
+} from "../../src/shared/skill-blocking-session.ts";
 import { askQuestionnaire } from "../../src/shared/interactive-questions.ts";
 import { expandHome, detectProject, type ProjectInfo } from "../../src/shared/project-detection.ts";
 
@@ -27,34 +43,7 @@ const commandName = "context";
 const noContextFilesValue = "__context-filter-none-files__";
 const noSkillsValue = "__context-filter-none-skills__";
 
-type ContextFilterScope = "project" | "paths";
-type SkillFilterScope = "names";
-
-type SkillRule = {
-	enabled?: boolean;
-	scope?: SkillFilterScope;
-	ignore?: string[];
-};
-
-type ProjectRule = {
-	enabled?: boolean;
-	scope?: ContextFilterScope;
-	ignore?: string[];
-	skills?: SkillRule;
-};
-
-type ContextFileFilterConfig = {
-	enabled?: boolean;
-	projects?: Record<string, ProjectRule>;
-};
-
-type SettingsWithContextFilter = Record<string, unknown> & {
-	contextFileFilter?: ContextFileFilterConfig;
-};
-
 type ContextConfigAnswer = "enabled" | "disabled" | string;
-
-
 
 type ActiveRuleState = {
 	project: ProjectInfo;
@@ -74,45 +63,9 @@ type SkillInfo = {
 };
 
 
-function readJsonFile(filePath: string): SettingsWithContextFilter {
-	try {
-		if (!existsSync(filePath)) return {};
-		const parsed = JSON.parse(readFileSync(filePath, "utf8"));
-		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as SettingsWithContextFilter : {};
-	} catch {
-		return {};
-	}
-}
-
-function writeJsonFile(filePath: string, value: SettingsWithContextFilter): void {
-	mkdirSync(path.dirname(filePath), { recursive: true });
-	writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-function mergeConfig(globalConfig?: ContextFileFilterConfig, projectConfig?: ContextFileFilterConfig): ContextFileFilterConfig | undefined {
-	if (!globalConfig && !projectConfig) return undefined;
-	return {
-		...globalConfig,
-		...projectConfig,
-		projects: {
-			...(globalConfig?.projects ?? {}),
-			...(projectConfig?.projects ?? {}),
-		},
-	};
-}
-
-function loadConfig(cwd: string): ContextFileFilterConfig | undefined {
-	const globalSettings = readJsonFile(path.join(getAgentDir(), "settings.json"));
-	const projectSettings = readJsonFile(path.join(cwd, ".pi", "settings.json"));
-	return mergeConfig(globalSettings.contextFileFilter, projectSettings.contextFileFilter);
-}
-
-
-
-
 function resolveState(cwd: string): ActiveRuleState {
 	const project = detectProject(cwd);
-	const config = loadConfig(cwd);
+	const config = loadContextFilterConfig(cwd);
 
 	if (!config) return { project, active: false, reason: "contextFileFilter is not configured" };
 	if (config.enabled === false) return { project, config, active: false, reason: "contextFileFilter.enabled is false" };
@@ -414,21 +367,6 @@ function mergeCandidateAndConfiguredPaths(candidates: string[], configured: stri
 	return Array.from(new Set([...candidates, ...configured])).sort((a, b) => a.localeCompare(b));
 }
 
-function saveProjectRule(projectId: string, rule: ProjectRule): void {
-	const settingsPath = path.join(getAgentDir(), "settings.json");
-	const settings = readJsonFile(settingsPath);
-	const currentFilter = settings.contextFileFilter ?? {};
-	settings.contextFileFilter = {
-		...currentFilter,
-		enabled: currentFilter.enabled ?? true,
-		projects: {
-			...(currentFilter.projects ?? {}),
-			[projectId]: rule,
-		},
-	};
-	writeJsonFile(settingsPath, settings);
-}
-
 function formatConfigSummary(projectId: string, rule: ProjectRule): string {
 	return [
 		`Updated context filter for ${projectId}.`,
@@ -462,7 +400,18 @@ export default function contextExtension(pi: ExtensionAPI) {
 		return state;
 	}
 
+	pi.events.on(contextFilterChangedEvent, (changedCwd: unknown) => {
+		if (typeof changedCwd === "string") refreshState(changedCwd);
+	});
+
+	pi.events.on(skillBlockingSessionChangedEvent, (change: unknown) => {
+		if (isSkillBlockingSessionChanged(change)) {
+			setSkillBlockingDisabled(change.sessionManager, change.disabled);
+		}
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
+		resetSkillBlockingSession(ctx.sessionManager);
 		refreshState(ctx.cwd);
 		lastLoadedPaths = [];
 		ignoredThisSession = [];
@@ -474,6 +423,34 @@ export default function contextExtension(pi: ExtensionAPI) {
 		notifiedGuidanceErrors.clear();
 	});
 
+	pi.on("input", async (event, ctx) => {
+		if (isSkillBlockingDisabled(ctx.sessionManager)) return;
+		const match = event.text.match(/^\/skill:([^\s]+)\b/);
+		if (!match) return;
+		const disabled = getDisabledProjectSkills(ctx.cwd);
+		if (!disabled.enabled || !disabled.skills.includes(match[1])) return;
+		ctx.ui.notify(`Blocked disabled project skill: ${match[1]}`, "warning");
+		return { action: "handled" };
+	});
+
+	pi.on("tool_call", async (event, ctx) => {
+		if (isSkillBlockingDisabled(ctx.sessionManager)) return;
+		const directories = getDisabledSkillDirectories(ctx.cwd);
+		if (!directories.length) return;
+
+		if (isToolCallEventType("bash", event)) {
+			const skill = disabledSkillForBashCommand(event.input.command, ctx.cwd, directories);
+			if (skill) return { block: true, reason: `Blocked access to disabled project skill: ${skill.name}` };
+			return;
+		}
+
+		if (!isToolCallEventType("read", event) && !isToolCallEventType("grep", event) && !isToolCallEventType("find", event) && !isToolCallEventType("ls", event)) return;
+		const input = event.input as { path?: unknown };
+		if (typeof input.path !== "string") return;
+		const skill = disabledSkillForPath(input.path, ctx.cwd, directories);
+		if (skill) return { block: true, reason: `Blocked access to disabled project skill: ${skill.name}` };
+	});
+
 	pi.on("before_agent_start", async (event, ctx) => {
 		const currentState = state ?? refreshState(ctx.cwd);
 		const contextFiles = event.systemPromptOptions.contextFiles ?? [];
@@ -481,7 +458,9 @@ export default function contextExtension(pi: ExtensionAPI) {
 		lastLoadedPaths = contextFiles.map((file) => file.path);
 
 		const ignored = contextFiles.filter((file) => shouldIgnoreContextFile(file, ctx.cwd, currentState));
-		const ignoredSkills = skills.filter((skill) => shouldIgnoreSkill(skill, currentState));
+		const ignoredSkills = isSkillBlockingDisabled(ctx.sessionManager)
+			? []
+			: skills.filter((skill) => shouldIgnoreSkill(skill, currentState));
 
 		let systemPrompt = event.systemPrompt;
 		let modified = false;
@@ -641,7 +620,7 @@ export default function contextExtension(pi: ExtensionAPI) {
 					},
 				};
 
-				saveProjectRule(currentState.project.id, rule);
+				saveContextFilterProjectRule(currentState.project.id, rule);
 				refreshState(ctx.cwd);
 				ctx.ui.notify(formatConfigSummary(currentState.project.id, rule), "info");
 				return;

@@ -23,7 +23,7 @@
 <a class="depth-2" href="#usage-and-skills">Usage and skills</a>
 <a class="depth-3" href="#skill-review">/skill-review</a>
 <a class="depth-3" href="#usage">/usage</a>
-<a class="depth-3" href="#update-skills">/update-skills</a>
+<a class="depth-3" href="#skillz">/skillz</a>
 <a class="depth-2" href="#evaluation-and-orchestration">Evaluation and orchestration</a>
 <a class="depth-3" href="#skill-eval">/skill-eval</a>
 <a class="depth-3" href="#subagents">/subagents</a>
@@ -60,7 +60,7 @@
 <td>Usage ledger reports, Codex subscription limits, session tags, and skill-read reports</td>
 </tr>
 <tr>
-<td><a href="#update-skills"><code>/update-skills</code></a></td>
+<td><a href="#skillz"><code>/skillz</code></a></td>
 <td>Check, select, and install agent skill updates</td>
 </tr>
 <tr>
@@ -217,18 +217,25 @@
 </code></pre>
 <p>Deletes <code>~/.pi/agent/usage/ledger.jsonl</code>. Interactive use asks for confirmation; <code>--yes</code> is required when no confirmation UI is available.</p>
 <p>Most <code>/usage</code> outputs support <code>--json</code>. See <a href="usage-tracking.md">usage tracking</a> and <a href="skill-read-tracking.md">skill-read tracking</a> for the complete data model and privacy details.</p>
-<h3 id="update-skills"><code>/update-skills</code><a class="anchor" href="#update-skills" aria-label="Link to this section">#</a></h3>
-<pre><code class="language-text">/update-skills
-/update-skills --check
-/update-skills --interactive
-/update-skills --respect-interval
+<h3 id="skillz"><code>/skillz</code><a class="anchor" href="#skillz" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/skillz update [--respect-interval]
+/skillz check
+/skillz interactive
+/skillz disable &lt;skill_path&gt;
+/skillz disable --list
+/skillz session --disable
+/skillz session --enable
+/skillz --help
 </code></pre>
-<p>Aliases <code>check</code>/<code>-c</code> and <code>interactive</code>/<code>-i</code> are accepted.</p>
+<p><code>--help</code> and <code>-h</code> are accepted by the command and each subcommand.</p>
 <ul>
-<li>No option: runs the local skill sync script with <code>--force</code>.</li>
-<li><code>--respect-interval</code>: runs the sync script without forcing its configured interval.</li>
-<li><code>--check</code>: checks version-pinned manifest sources for newer refs without installing them.</li>
-<li><code>--interactive</code>: requires interactive UI, opens a selector, updates accepted manifest refs, and syncs the selected changes.</li>
+<li><code>update</code>: runs the local skill sync script with <code>--force</code> by default. Pass <code>--respect-interval</code> to honor its configured interval instead.</li>
+<li><code>check</code>: checks version-pinned manifest sources for newer refs without installing them.</li>
+<li><code>interactive</code>: requires interactive UI, opens a selector, updates accepted manifest refs, and syncs the selected changes.</li>
+<li><code>disable &lt;skill_path&gt;</code>: accepts a project-local skill directory or <code>SKILL.md</code> path and adds its skill name to the current project&#39;s existing context-filter ignore list in <code>~/.pi/agent/settings.json</code>. Tab completion suggests currently discovered project skill directories by name and path. It removes the skill from model context and blocks <code>/skill:&lt;name&gt;</code>, direct Pi file tools, and literal shell references to every file within that skill directory. Pi may still discover it and expose its command in the startup UI. This is workflow enforcement, not an OS security sandbox against arbitrary or obfuscated shell access.</li>
+<li><code>disable --list</code>: lists managed skills with <code>enabled: false</code> in <code>~/.agents/skills/manifest.json</code> and the effective disabled skills for the current Git project.</li>
+<li><code>session --disable</code>: bypasses all project disabled-skill filtering and access guards for the current in-memory session and shows <code>skillz: blocking off</code> above the editor. Disabled skills return to model context, <code>/skill:&lt;name&gt;</code> works, and direct file, shell, and subagent access is allowed. The override resets on <code>/reload</code>, <code>/new</code>, <code>/resume</code>, <code>/fork</code>, or process restart and does not modify settings.</li>
+<li><code>session --enable</code>: restores disabled-skill filtering and access guards immediately.</li>
 </ul>
 <p>The extension also checks pinned versions once at normal session startup, but skips duplicate checks on <code>/reload</code>. It uses <code>~/.agents/skills/manifest.json</code> by default and delegates mutations/install work to the scripts under <code>~/.agents/scripts/</code>.</p>
 <h2 id="evaluation-and-orchestration">Evaluation and orchestration<a class="anchor" href="#evaluation-and-orchestration" aria-label="Link to this section">#</a></h2>

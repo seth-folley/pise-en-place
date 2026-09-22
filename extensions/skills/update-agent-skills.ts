@@ -7,12 +7,19 @@
  * locking, and manifest mutation.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import {
+    contextFilterChangedEvent,
+    disableProjectSkill,
+    getDisabledProjectSkills,
+} from "../../src/shared/context-filter-config.ts";
 import { askMultiSelectQuestion } from "../../src/shared/interactive-questions.ts";
+import { getProjectSkillPathCompletions, resolveProjectSkill } from "../../src/shared/project-skill.ts";
+import { skillBlockingSessionChangedEvent } from "../../src/shared/skill-blocking-session.ts";
 
 const agentsHome = join(homedir(), ".agents");
 const skillsDirectory = process.env.AGENTS_SKILLS_DIR ?? join(agentsHome, "skills");
@@ -20,6 +27,7 @@ const manifestPath = process.env.AGENTS_SKILLS_MANIFEST ?? join(skillsDirectory,
 const updateScript = join(agentsHome, "scripts", "update-skills.sh");
 const checkTimeoutMs = 10_000;
 const messageType = "agent-skills-output";
+const skillBlockingWidgetId = "skill-blocking";
 const versionPattern = /^v?\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?$/;
 
 type NotifyLevel = "info" | "warning" | "error";
@@ -369,7 +377,7 @@ export default function (pi: ExtensionAPI) {
 
     // Runs the startup/manual check flow and optionally notifies when current.
     //
-    // Startup uses this silently unless updates are available. Manual --check uses
+    // Startup uses this silently unless updates are available. Manual checks use
     // `notifyWhenCurrent` so an up-to-date result is still visible to the user.
     async function checkSkillVersions(ctx: NotifyContext, notifyWhenCurrent = false) {
         const check = await checkSkillUpdates();
@@ -382,18 +390,50 @@ export default function (pi: ExtensionAPI) {
 
         if (ctx.hasUI && check.updates.length > 0) {
             ctx.ui.notify(
-                `Skill updates available: ${check.updates.length}. Run /update-skills --interactive.`,
+                `Skill updates available: ${check.updates.length}. Run /skillz interactive.`,
                 "info",
             );
             showOutput(
                 "Skill updates available",
-                `${formattedResult}\n\nRun /update-skills --interactive to choose updates.`,
+                `${formattedResult}\n\nRun /skillz interactive to choose updates.`,
             );
         } else if (ctx.hasUI && notifyWhenCurrent) {
             showOutput("Skill update check", formattedResult);
         }
 
         return formattedResult;
+    }
+
+    // Lists disabled managed skills and the effective disabled skills for this project.
+    async function listDisabledSkills(cwd: string) {
+        const lines = ["Globally disabled managed skills", `Manifest: ${manifestPath}`];
+
+        try {
+            const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as SkillManifest;
+            const disabled = Array.isArray(manifest.skills)
+                ? manifest.skills.flatMap((entry) => {
+                    if (!entry || typeof entry !== "object") return [];
+                    const skill = entry as SkillManifestEntry;
+                    return skill.enabled === false && typeof skill.name === "string" && skill.name
+                        ? [skill.name]
+                        : [];
+                }).sort((left, right) => left.localeCompare(right))
+                : [];
+            lines.push(...(disabled.length > 0 ? disabled.map((name) => `- ${name}`) : ["- (none)"]));
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            lines.push(`- Unable to read manifest: ${reason}`);
+        }
+
+        const project = getDisabledProjectSkills(cwd);
+        lines.push("", "Current project disabled skills", `Project: ${project.projectId ?? "unknown"}`);
+        if (!project.enabled) {
+            lines.push(`- (none active: ${project.reason ?? "project filter inactive"})`);
+        } else {
+            lines.push(...(project.skills.length > 0 ? project.skills.map((name) => `- ${name}`) : ["- (none)"]));
+        }
+
+        return lines.join("\n");
     }
 
     // Delegates manifest ref mutation to update-skills.sh --pin via JSON.
@@ -482,35 +522,151 @@ export default function (pi: ExtensionAPI) {
 
     // Checks for pinned skill updates at session start, but avoids duplicate checks on reload.
     pi.on("session_start", async (event, ctx) => {
+        ctx.ui.setWidget(skillBlockingWidgetId, undefined);
         if (event.reason === "reload") return;
         await checkSkillVersions(ctx);
     });
 
-    // Registers /update-skills for sync, --check, and --interactive workflows.
-    pi.registerCommand("update-skills", {
-        description: "Update skills; pass --check to check or --interactive to choose version updates",
+    // Registers /skillz with explicit update, check, interactive, and disable workflows.
+    pi.registerCommand("skillz", {
+        description: "Manage skills with update, check, interactive, disable, or session subcommands",
+        getArgumentCompletions: (prefix) => {
+            const skillPathItems = getProjectSkillPathCompletions(pi.getCommands(), process.cwd(), prefix);
+            const argumentsList = [
+                "update",
+                "update --respect-interval",
+                "update --help",
+                "check",
+                "check --help",
+                "interactive",
+                "interactive --help",
+                "disable",
+                "disable --list",
+                "disable --help",
+                "session --disable",
+                "session --enable",
+                "session --help",
+                "--help",
+                "-h",
+            ];
+            const commandItems = argumentsList
+                .filter((argument) => argument.startsWith(prefix))
+                .map((argument) => ({ value: argument, label: argument }));
+            const items = [...commandItems, ...skillPathItems];
+            return items.length > 0 ? items : null;
+        },
         handler: async (args, ctx) => {
             const tokens = args.trim().split(/\s+/).filter(Boolean);
-            const shouldCheck = tokens.includes("--check") || tokens.includes("-c") || tokens.includes("check");
-            const interactive = tokens.includes("--interactive") ||
-                tokens.includes("-i") ||
-                tokens.includes("interactive");
-            const respectInterval = tokens.includes("--respect-interval");
+            const [subcommand, ...options] = tokens;
+            const helpFlags = new Set(["--help", "-h"]);
+            const usage = [
+                "Usage:",
+                "  /skillz update [--respect-interval]",
+                "  /skillz check",
+                "  /skillz interactive",
+                "  /skillz disable <skill_path>",
+                "  /skillz disable --list",
+                "  /skillz session --disable",
+                "  /skillz session --enable",
+                "  /skillz --help",
+            ].join("\n");
+            const subcommandHelp: Record<string, string> = {
+                update: "Usage: /skillz update [--respect-interval]\n\nSync configured skills. By default, forces a sync; --respect-interval honors the script's configured interval.",
+                check: "Usage: /skillz check\n\nCheck version-pinned skill sources for newer refs without installing them.",
+                interactive: "Usage: /skillz interactive\n\nChoose available updates, pin accepted refs, and sync the selected changes. Requires interactive UI.",
+                disable: "Usage:\n  /skillz disable <skill_path>\n  /skillz disable --list\n\nHide a project-local skill from the model in this project, or list globally and project-specifically disabled skills. Paths may be a skill directory or SKILL.md.",
+                session: "Usage:\n  /skillz session --disable\n  /skillz session --enable\n\nDisable or re-enable all disabled-skill blocking for this in-memory session. The override resets on reload or session replacement and does not change settings.",
+            };
 
-            const output = interactive
-                ? await runInteractiveUpdate(ctx)
-                : shouldCheck
-                    ? await checkSkillVersions(ctx, true)
-                    : await updateSkills(ctx, !respectInterval);
-
-            if (!shouldCheck || !ctx.hasUI || interactive) {
-                const title = interactive
-                    ? "Interactive skill update"
-                    : shouldCheck
-                        ? "Skill update check"
-                        : "Skill update";
-                showOutput(title, output);
+            if (!subcommand || (helpFlags.has(subcommand) && options.length === 0)) {
+                showOutput("Skill management", usage);
+                return;
             }
+
+            if (options.length === 1 && helpFlags.has(options[0]) && subcommandHelp[subcommand]) {
+                showOutput("Skill management", subcommandHelp[subcommand]);
+                return;
+            }
+
+            if (subcommand === "check" && options.length === 0) {
+                const output = await checkSkillVersions(ctx, true);
+                if (!ctx.hasUI) showOutput("Skill update check", output);
+                return;
+            }
+
+            if (subcommand === "interactive" && options.length === 0) {
+                showOutput("Interactive skill update", await runInteractiveUpdate(ctx));
+                return;
+            }
+
+            if (subcommand === "disable" && options.length === 1 && options[0] === "--list") {
+                showOutput("Disabled skills", await listDisabledSkills(ctx.cwd));
+                return;
+            }
+
+            if (subcommand === "session" && options.length === 1 && (options[0] === "--disable" || options[0] === "--enable")) {
+                const disabled = options[0] === "--disable";
+                pi.events.emit(skillBlockingSessionChangedEvent, {
+                    sessionManager: ctx.sessionManager,
+                    disabled,
+                });
+                ctx.ui.setWidget(
+                    skillBlockingWidgetId,
+                    disabled ? ["skillz: blocking off"] : undefined,
+                    { placement: "aboveEditor" },
+                );
+                showOutput(
+                    "Session skill blocking",
+                    disabled
+                        ? "Disabled for this session. Project-disabled skills are available until reload or session replacement."
+                        : "Enabled for this session. Project-disabled skills are blocked again.",
+                );
+                return;
+            }
+
+            if (subcommand === "disable") {
+                const skillPath = args.trim().slice("disable".length).trim();
+                if (!skillPath) {
+                    showOutput("Skill management", subcommandHelp.disable);
+                    return;
+                }
+
+                try {
+                    const skill = await resolveProjectSkill(skillPath, ctx.cwd);
+                    const loadedSkills = ctx.getSystemPromptOptions().skills ?? [];
+                    const loadedPaths = await Promise.all(loadedSkills.map(async (loadedSkill) => {
+                        try {
+                            return await realpath(loadedSkill.filePath);
+                        } catch {
+                            return loadedSkill.filePath;
+                        }
+                    }));
+                    if (!loadedPaths.includes(skill.entryPath)) {
+                        throw new Error(`Project skill is not currently discovered by Pi: ${skill.entryPath}`);
+                    }
+
+                    const result = disableProjectSkill(skill.projectId, skill.name, ctx.cwd);
+                    pi.events.emit(contextFilterChangedEvent, ctx.cwd);
+                    const status = result.alreadyDisabled ? "Already disabled" : "Disabled";
+                    showOutput(
+                        "Project skill disabled",
+                        `${status}: ${skill.name}\nProject: ${skill.projectId}\nPath: ${skill.entryPath}\n\nThe skill is hidden from model context for this project. Pi may still discover it and expose /skill:${skill.name}.`,
+                    );
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    showOutput("Skill disable failed", message);
+                }
+                return;
+            }
+
+            if (subcommand === "update" &&
+                (options.length === 0 || (options.length === 1 && options[0] === "--respect-interval"))) {
+                const respectInterval = options[0] === "--respect-interval";
+                showOutput("Skill update", await updateSkills(ctx, !respectInterval));
+                return;
+            }
+
+            showOutput("Skill management", usage);
         },
     });
 }

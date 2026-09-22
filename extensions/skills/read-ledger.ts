@@ -100,9 +100,9 @@ function findSkillCommandByPath(pi: ExtensionAPI, filePath: string, cwd: string 
 	return getSkillCommands(pi).find((command) => {
 		const commandPath = command.sourceInfo?.path;
 		if (!commandPath) return false;
-		const normalizedCommandPath = normalizeFilePath(commandPath, cwd);
-		if (normalized === normalizedCommandPath) return true;
-		return path.basename(normalized) === "SKILL.md" && path.dirname(normalized) === path.dirname(normalizedCommandPath);
+		const skillDirectory = path.dirname(normalizeFilePath(commandPath, cwd));
+		const relative = path.relative(skillDirectory, normalized);
+		return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
 	});
 }
 
