@@ -28,6 +28,8 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 
 - `extensions/safety/index.ts` detects risky bash, edit, and write operations.
 - Dangerous operations require confirmation before running. `/safety toggle` disables or re-enables these prompts for the current session; `/safety` shows the current state.
+- The same checks apply to `bash`, `write`, and `edit` calls nested inside codemode; the outer JavaScript script does not require a separate approval. Concurrent safety decisions are queued one at a time across tool calls and user bash. Cancelling the originating turn dismisses its active dialog and blocks its queued hazardous calls without showing more prompts; harmless calls are not held up by the queue.
+- Safety does not gate other custom or MCP tools, whether called directly or through codemode.
 - A deliberately small, workspace-scoped read-only shell grammar (`find`, `rg`, read-only Git/GitHub queries, shell tests, and safe output piping) runs without confirmation; ambiguous syntax, external paths, and effectful commands remain gated.
 - Optional portable home-directory roots can be added in `~/.pi/safety.json`; safety reads it for each permission check, it is never created automatically, and mutations remain gated:
 

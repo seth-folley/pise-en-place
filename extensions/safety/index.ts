@@ -598,6 +598,7 @@ async function confirmDangerousOperation(
     details: string,
     reasons: string[],
     ctx: ExtensionContext,
+    signal: AbortSignal | undefined,
 ): Promise<boolean> {
     const reasonText = reasons.map((reason) => `• ${reason}`).join("\n");
     const message = `${reasonText}\n\n${details}`;
@@ -607,7 +608,8 @@ async function confirmDangerousOperation(
     }
 
     notifySupacodeAttention(`Permission required: ${title} ${reasons.join(", ")}`);
-    const allowed = await ctx.ui.confirm(title, message);
+    const confirmed = await ctx.ui.confirm(title, message, { signal });
+    const allowed = confirmed && !signal?.aborted;
     recordSafetyDialog(pi, {
         kind: "file",
         subject: details,
@@ -623,6 +625,7 @@ async function chooseDangerousCommandAction(
     reasons: string[],
     priorExplanationRequest: ExplanationRequest | undefined,
     ctx: ExtensionContext,
+    signal: AbortSignal | undefined,
 ): Promise<DangerousOperationAction> {
     if (!ctx.hasUI) {
         return "block";
@@ -643,12 +646,14 @@ async function chooseDangerousCommandAction(
     notifySupacodeAttention(
         `Permission required: Allow potentially dangerous bash command? ${reasons.join(", ")}`,
     );
-    const choice = await ctx.ui.select(message, [allowLabel, blockLabel, explainLabel]);
-    const decision: DangerousOperationAction = choice === allowLabel
-        ? "allow"
-        : choice === explainLabel
-            ? "explain"
-            : "block";
+    const choice = await ctx.ui.select(message, [allowLabel, blockLabel, explainLabel], { signal });
+    const decision: DangerousOperationAction = signal?.aborted
+        ? "block"
+        : choice === allowLabel
+            ? "allow"
+            : choice === explainLabel
+                ? "explain"
+                : "block";
     recordSafetyDialog(pi, {
         kind: "bash",
         subject: summarizeCommand(command),
@@ -678,6 +683,23 @@ export default function (pi: ExtensionAPI) {
     const explanationRequests = new Map<string, ExplanationRequest>();
     const pendingExplanationCommandKeys = new Set<string>();
     let promptsEnabled = true;
+    let decisionQueue: Promise<void> = Promise.resolve();
+
+    // Pi has one extension selector. Serialize hazardous decisions, including nested
+    // codemode calls and user bash, without holding up harmless tool calls.
+    function withSafetyDecision<T>(
+        ctx: ExtensionContext,
+        blocked: T,
+        decide: (signal: AbortSignal | undefined) => Promise<T>,
+    ): Promise<T> {
+        // Context signals are live getters; retain the originating turn's signal
+        // so a queued call cannot accidentally use a later turn's signal.
+        const signal = ctx.signal;
+        const result = decisionQueue.then(() => signal?.aborted ? blocked : decide(signal));
+        // A failed dialog must block its caller, not poison subsequent decisions.
+        decisionQueue = result.then(() => undefined, () => undefined);
+        return result;
+    }
 
     function restoreMode(ctx: ExtensionContext): void {
         promptsEnabled = true;
@@ -743,17 +765,20 @@ export default function (pi: ExtensionAPI) {
             const reasons = detectHazards(command, loadSafetyReadOnlyPaths());
             if (reasons.length === 0) return undefined;
 
-            const priorExplanationRequest = getExplanationRequest(explanationRequests, command);
-            const action = await chooseDangerousCommandAction(pi, command, reasons, priorExplanationRequest, ctx);
-            if (action === "allow") return undefined;
+            const blocked = { block: true, reason: blockedOutput(reasons) };
+            return withSafetyDecision<typeof blocked | undefined>(ctx, blocked, async (signal) => {
+                const priorExplanationRequest = getExplanationRequest(explanationRequests, command);
+                const action = await chooseDangerousCommandAction(pi, command, reasons, priorExplanationRequest, ctx, signal);
+                if (action === "allow") return undefined;
 
-            if (action === "explain") {
-                const commandKey = recordExplanationRequest(explanationRequests, command, reasons);
-                pendingExplanationCommandKeys.add(commandKey);
-                return { block: true, reason: explanationRequestOutput(command, reasons) };
-            }
+                if (action === "explain") {
+                    const commandKey = recordExplanationRequest(explanationRequests, command, reasons);
+                    pendingExplanationCommandKeys.add(commandKey);
+                    return { block: true, reason: explanationRequestOutput(command, reasons) };
+                }
 
-            return { block: true, reason: blockedOutput(reasons) };
+                return blocked;
+            });
         }
 
         if (event.toolName === "write" || event.toolName === "edit") {
@@ -761,16 +786,18 @@ export default function (pi: ExtensionAPI) {
             if (!toolPath || !isProtectedSystemPath(toolPath)) return undefined;
 
             const reasons = ["writing system files outside ~/.pi"];
-            const allowed = await confirmDangerousOperation(
-                pi,
-                "Allow writing to a system file?",
-                `Tool: ${event.toolName}\nPath: ${toolPath}`,
-                reasons,
-                ctx,
-            );
-            if (allowed) return undefined;
-
-            return { block: true, reason: blockedOutput(reasons) };
+            const blocked = { block: true, reason: blockedOutput(reasons) };
+            return withSafetyDecision<typeof blocked | undefined>(ctx, blocked, async (signal) => {
+                const allowed = await confirmDangerousOperation(
+                    pi,
+                    "Allow writing to a system file?",
+                    `Tool: ${event.toolName}\nPath: ${toolPath}`,
+                    reasons,
+                    ctx,
+                    signal,
+                );
+                return allowed ? undefined : blocked;
+            });
         }
 
         return undefined;
@@ -781,26 +808,26 @@ export default function (pi: ExtensionAPI) {
         const reasons = detectHazards(event.command, loadSafetyReadOnlyPaths());
         if (reasons.length === 0) return undefined;
 
-        const priorExplanationRequest = getExplanationRequest(explanationRequests, event.command);
-        const action = await chooseDangerousCommandAction(pi, event.command, reasons, priorExplanationRequest, ctx);
-        if (action === "allow") return undefined;
-
-        const output = action === "explain"
-            ? explanationRequestOutput(event.command, reasons)
-            : blockedOutput(reasons);
-
-        if (action === "explain") {
-            const commandKey = recordExplanationRequest(explanationRequests, event.command, reasons);
-            pendingExplanationCommandKeys.add(commandKey);
-        }
-
-        return {
+        const blocked = {
             result: {
-                output,
+                output: blockedOutput(reasons),
                 exitCode: 126,
                 cancelled: false,
                 truncated: false,
             },
         };
+        return withSafetyDecision<typeof blocked | undefined>(ctx, blocked, async (signal) => {
+            const priorExplanationRequest = getExplanationRequest(explanationRequests, event.command);
+            const action = await chooseDangerousCommandAction(pi, event.command, reasons, priorExplanationRequest, ctx, signal);
+            if (action === "allow") return undefined;
+
+            if (action === "explain") {
+                const commandKey = recordExplanationRequest(explanationRequests, event.command, reasons);
+                pendingExplanationCommandKeys.add(commandKey);
+                return { result: { ...blocked.result, output: explanationRequestOutput(event.command, reasons) } };
+            }
+
+            return blocked;
+        });
     });
 }

@@ -20,6 +20,8 @@
 <a class="brand" href="#command-reference">pise-en-place</a>
 <div class="sidebar-title">Command reference</div>
 <nav class="nav" aria-label="Command reference sections"><a class="depth-2" href="#quick-reference">Quick reference</a>
+<a class="depth-2" href="#safety">Safety</a>
+<a class="depth-3" href="#safety">/safety</a>
 <a class="depth-2" href="#usage-and-skills">Usage and skills</a>
 <a class="depth-3" href="#skill-review">/skill-review</a>
 <a class="depth-3" href="#usage">/usage</a>
@@ -56,6 +58,10 @@
 </tr>
 </thead>
 <tbody><tr>
+<td><a href="#safety"><code>/safety</code></a></td>
+<td>Show or toggle safety permission prompts for the current session</td>
+</tr>
+<tr>
 <td><a href="#usage"><code>/usage</code></a></td>
 <td>Usage ledger reports, Codex subscription limits, session tags, and skill-read reports</td>
 </tr>
@@ -120,6 +126,10 @@
 <td>Toggle response-duration reporting</td>
 </tr>
 </tbody></table>
+<h2 id="safety">Safety<a class="anchor" href="#safety" aria-label="Link to this section">#</a></h2>
+<h3 id="safety-1"><code>/safety</code><a class="anchor" href="#safety-1" aria-label="Link to this section">#</a></h3>
+<p><code>/safety</code> reports whether safety permission prompts are on. <code>/safety toggle</code> switches them off or back on for the active session. Prompts are on by default; turning them off allows risky bash commands (including user bash) and protected-file writes without this extension&#39;s confirmation, even without an interactive UI. Other extensions&#39; confirmations are unaffected. The setting is stored in the session branch, survives <code>/reload</code> and session resume, and resets to on in new sessions or branches without the toggle entry.</p>
+<p>The same checks and toggle apply to <code>bash</code>, <code>write</code>, and <code>edit</code> calls nested inside codemode. The script itself is not separately gated. Concurrent hazardous calls share a single safety-decision queue with user bash, so each approval belongs to one operation. Cancelling the originating turn dismisses its active safety dialog and blocks its queued hazardous calls without further prompts. Harmless calls do not wait for this queue. Other custom and MCP tools remain outside this extension&#39;s checks.</p>
 <h2 id="usage-and-skills">Usage and skills<a class="anchor" href="#usage-and-skills" aria-label="Link to this section">#</a></h2>
 <h3 id="skill-review"><code>/skill-review</code><a class="anchor" href="#skill-review" aria-label="Link to this section">#</a></h3>
 <pre><code class="language-text">/skill-review &lt;skill-name&gt;

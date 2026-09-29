@@ -32,6 +32,8 @@ After changing or installing extensions, run Pi's built-in `/reload` command.
 
 `/safety` reports whether safety permission prompts are on. `/safety toggle` switches them off or back on for the active session. Prompts are on by default; turning them off allows risky bash commands (including user bash) and protected-file writes without this extension's confirmation, even without an interactive UI. Other extensions' confirmations are unaffected. The setting is stored in the session branch, survives `/reload` and session resume, and resets to on in new sessions or branches without the toggle entry.
 
+The same checks and toggle apply to `bash`, `write`, and `edit` calls nested inside codemode. The script itself is not separately gated. Concurrent hazardous calls share a single safety-decision queue with user bash, so each approval belongs to one operation. Cancelling the originating turn dismisses its active safety dialog and blocks its queued hazardous calls without further prompts. Harmless calls do not wait for this queue. Other custom and MCP tools remain outside this extension's checks.
+
 ## Usage and skills
 
 ### `/skill-review`
