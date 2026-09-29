@@ -8,6 +8,7 @@ After changing or installing extensions, run Pi's built-in `/reload` command.
 
 | Command | Purpose |
 | --- | --- |
+| [`/safety`](#safety) | Show or toggle safety permission prompts for the current session |
 | [`/usage`](#usage) | Usage ledger reports, Codex subscription limits, session tags, and skill-read reports |
 | [`/skillz`](#skillz) | Check, select, and install agent skill updates |
 | [`/skill-review`](#skill-review) | Retain independent skill reviews and automatically consolidate them |
@@ -24,6 +25,12 @@ After changing or installing extensions, run Pi's built-in `/reload` command.
 | [`/statusline`](#statusline) | Cycle the custom footer or trace context readings |
 | [`/statusline-colors`](#statusline-colors) | Preview context-indicator colors |
 | [`/response-time`](#response-time) | Toggle response-duration reporting |
+
+## Safety
+
+### `/safety`
+
+`/safety` reports whether safety permission prompts are on. `/safety toggle` switches them off or back on for the active session. Prompts are on by default; turning them off allows risky bash commands (including user bash) and protected-file writes without this extension's confirmation, even without an interactive UI. Other extensions' confirmations are unaffected. The setting is stored in the session branch, survives `/reload` and session resume, and resets to on in new sessions or branches without the toggle entry.
 
 ## Usage and skills
 

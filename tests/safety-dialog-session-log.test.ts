@@ -7,6 +7,7 @@ describe("safety dialog session logging", () => {
         const entries: Array<{ type: string; data: unknown }> = [];
         safetyExtension({
             on: (event: string, handler: any) => { handlers[event] = handler; },
+            registerCommand: () => {},
             appendEntry: (type: string, data: unknown) => { entries.push({ type, data }); },
         } as any);
 
@@ -32,6 +33,7 @@ describe("safety dialog session logging", () => {
         const entries: Array<{ type: string; data: unknown }> = [];
         safetyExtension({
             on: (event: string, handler: any) => { handlers[event] = handler; },
+            registerCommand: () => {},
             appendEntry: (type: string, data: unknown) => { entries.push({ type, data }); },
         } as any);
 

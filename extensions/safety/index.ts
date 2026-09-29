@@ -34,6 +34,7 @@ type SafetyDialogRecord = {
 };
 
 const safetyDialogEntryType = "pise-en-place:safety-dialog";
+const safetyModeEntryType = "pise-en-place:safety-mode";
 
 const protectedSystemRoots = [
     "/Applications",
@@ -676,6 +677,43 @@ function extractToolPath(input: unknown): string | undefined {
 export default function (pi: ExtensionAPI) {
     const explanationRequests = new Map<string, ExplanationRequest>();
     const pendingExplanationCommandKeys = new Set<string>();
+    let promptsEnabled = true;
+
+    function restoreMode(ctx: ExtensionContext): void {
+        promptsEnabled = true;
+        for (const entry of ctx.sessionManager.getBranch()) {
+            if (entry.type === "custom" && entry.customType === safetyModeEntryType) {
+                const data = entry.data as { version?: unknown; promptsEnabled?: unknown } | undefined;
+                if (data?.version === 1 && typeof data.promptsEnabled === "boolean") {
+                    promptsEnabled = data.promptsEnabled;
+                }
+            }
+        }
+    }
+
+    pi.on("session_start", async (_event, ctx) => restoreMode(ctx));
+    pi.on("session_tree", async (_event, ctx) => restoreMode(ctx));
+
+    pi.registerCommand("safety", {
+        description: "Show or toggle safety permission prompts for this session",
+        handler: async (args, ctx) => {
+            const action = args.trim();
+            if (action !== "toggle" && action !== "") {
+                ctx.ui.notify("Usage: /safety [toggle]", "warning");
+                return;
+            }
+            if (action === "toggle") {
+                promptsEnabled = !promptsEnabled;
+                pi.appendEntry(safetyModeEntryType, { version: 1, promptsEnabled });
+            }
+            ctx.ui.notify(
+                promptsEnabled
+                    ? "Safety permission prompts are ON for this session."
+                    : "Safety permission prompts are OFF for this session. Risky bash commands and protected-file writes will run without safety confirmation.",
+                promptsEnabled ? "info" : "warning",
+            );
+        },
+    });
 
     pi.on("message_end", async (event) => {
         if (pendingExplanationCommandKeys.size === 0) return;
@@ -699,6 +737,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("tool_call", async (event, ctx) => {
+        if (!promptsEnabled) return undefined;
         if (event.toolName === "bash") {
             const command = String((event.input as { command?: unknown }).command ?? "");
             const reasons = detectHazards(command, loadSafetyReadOnlyPaths());
@@ -738,6 +777,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("user_bash", async (event, ctx) => {
+        if (!promptsEnabled) return undefined;
         const reasons = detectHazards(event.command, loadSafetyReadOnlyPaths());
         if (reasons.length === 0) return undefined;
 
