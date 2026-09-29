@@ -2,6 +2,10 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
+    AUTOCOMPACT_STATUS_EVENT, AUTOCOMPACT_STATUS_REQUEST, AUTOCOMPACT_SYMBOL,
+    autoCompactIndicatorColor, isAutoCompactStatus, type AutoCompactStatus,
+} from "../../src/shared/autocompact-status.ts";
+import {
     clearContextUsageDisplayState,
     createContextUsageDisplayState,
     getContextUsageDisplay,
@@ -88,9 +92,20 @@ export default function (pi: ExtensionAPI) {
 
         ctx.ui.setFooter((tui, theme, footerData) => {
             const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
+            const sessionId = ctx.sessionManager.getSessionId();
+            let autoCompactStatus: AutoCompactStatus | undefined;
+            const unsubscribeAutoCompact = pi.events.on(AUTOCOMPACT_STATUS_EVENT, (status) => {
+                if (!isAutoCompactStatus(status) || status.sessionId !== sessionId) return;
+                autoCompactStatus = status;
+                tui.requestRender();
+            });
+            pi.events.emit(AUTOCOMPACT_STATUS_REQUEST, sessionId);
 
             return {
-                dispose: unsubscribe,
+                dispose() {
+                    unsubscribe();
+                    unsubscribeAutoCompact();
+                },
                 invalidate() {},
                 render(width: number): string[] {
                     let input = 0;
@@ -142,6 +157,19 @@ export default function (pi: ExtensionAPI) {
                         : `${contextUsage.estimated ? "~" : ""}${Math.round(contextPercent)}%`;
                     const contextFilled = "█".repeat(contextFill);
                     const contextEmpty = "░".repeat(contextWidth - contextFill);
+                    // Use live tokens, not the bar's retained estimate: after compaction
+                    // unknown usage must not keep an obsolete warning color.
+                    const autoCompactSymbol = autoCompactStatus
+                        ? theme.fg("dim", " ") + theme.fg(autoCompactIndicatorColor(
+                            autoCompactStatus, liveContextUsage?.tokens,
+                            liveContextUsage?.contextWindow ?? ctx.model?.contextWindow,
+                        ), AUTOCOMPACT_SYMBOL)
+                        : "";
+                    const context =
+                        theme.fg(contextColor, contextPercentText) +
+                        theme.fg("dim", " ") +
+                        theme.fg(contextColor, contextFilled) +
+                        theme.fg("dim", contextEmpty) + autoCompactSymbol;
 
                     if (style === "minimal") {
                         const left =
@@ -160,11 +188,6 @@ export default function (pi: ExtensionAPI) {
                             theme.fg("text", totalText) +
                             theme.fg("dim", " · ") +
                             theme.fg("warning", costText);
-                        const context =
-                            theme.fg(contextColor, contextPercentText) +
-                            theme.fg("dim", " ") +
-                            theme.fg(contextColor, contextFilled) +
-                            theme.fg("dim", contextEmpty);
                         const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
                         const usagePad =
                             " ".repeat(Math.max(1, width - visibleWidth(tokenUsage) - visibleWidth(context)));
@@ -197,11 +220,6 @@ export default function (pi: ExtensionAPI) {
                         theme.fg("text", totalText) +
                         theme.fg("dim", " │ ") +
                         theme.fg("warning", costText);
-                    const context =
-                        theme.fg(contextColor, contextPercentText) +
-                        theme.fg("dim", " ") +
-                        theme.fg(contextColor, contextFilled) +
-                        theme.fg("dim", contextEmpty);
                     const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
                     const usagePad =
                         " ".repeat(Math.max(1, width - visibleWidth(tokenUsage) - visibleWidth(context)));

@@ -106,6 +106,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 
 - `extensions/productivity/current-pr.ts` adds `/pr` and the `get_current_branch_pr` tool for GitHub PR lookup via `gh`.
 - `extensions/productivity/jira-worktree.ts` adds `/jira-worktree <JIRA-KEY> [--branch-suffix <slug>]`: it reads the story through authenticated `acli`, uses the supplied suffix or asks an isolated no-tools Pi agent for concise options, then creates a Supacode worktree and starts Pi there with a concise ticket brief. Use `-h` or `--help` for command help.
+- `extensions/productivity/autocompact/` adds opt-in `/autocompact` with a 250k-token ceiling, agent/user warnings at 80% and 90%, and the `compact_context` tool. A colored `≡` beside the footer context bar shows threshold status; `/autocompact status` shows current use and limits. Requires Pi 0.87.1+; run `/autocompact on` to enable. See [automatic compaction](docs/autocompact.md).
 - `extensions/productivity/context.ts` adds `/context` status and `/context project config` for project-specific context-file and skill filtering, plus private project guidance injection.
 - See `docs/private-guidance.md` for configuring per-project `additional_guidance` files.
 - `extensions/productivity/todos.ts` adds `/todos`, the `todo` tool, and a session-scoped todo widget.

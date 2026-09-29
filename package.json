@@ -29,9 +29,9 @@
   },
   "homepage": "https://github.com/seth-folley/pise-en-place#readme",
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.85.1",
-    "@earendil-works/pi-coding-agent": "^0.85.1",
-    "@earendil-works/pi-tui": "^0.85.1",
+    "@earendil-works/pi-ai": "^0.87.1",
+    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@earendil-works/pi-tui": "^0.87.1",
     "@types/node": "^25.9.1",
     "typebox": "^1.1.38",
     "typescript": "^6.0.3",
@@ -49,6 +49,7 @@
       "./extensions/ui/response-time.ts",
       "./extensions/ui/interactive-agent-questions.ts",
       "./extensions/orchestration/subagent/index.ts",
+      "./extensions/productivity/autocompact/index.ts",
       "./extensions/productivity/context.ts",
       "./extensions/productivity/copy-session-id.ts",
       "./extensions/productivity/cut-input.ts",
@@ -69,7 +70,7 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-coding-agent": ">=0.87.1",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
