@@ -12,6 +12,13 @@ Icon?
 *.swo
 *~
 
+# Xcode / Swift (shared schemes and test plans are source files)
+xcuserdata/
+*.xcuserstate
+DerivedData/
+.build/
+.swiftpm/
+
 # Node / TypeScript
 node_modules/
 npm-debug.log*

@@ -47,6 +47,15 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 - `extensions/skills/read-ledger.ts` tracks explicit skill command usage and skill-file reads without storing prompts or skill contents.
 - See `docs/usage-tracking.md` and `docs/skill-read-tracking.md`.
 
+### Pise macOS companion
+
+- Open [`mac/Pise.xcworkspace`](mac/Pise.xcworkspace) to edit the macOS 26+ app project and local package together.
+- [`mac/Pise/Pise.xcodeproj`](mac/Pise/Pise.xcodeproj) is the thin SwiftUI menu bar app shell.
+- [`mac/PiseKit/Package.swift`](mac/PiseKit/Package.swift) owns the dashboard, TCA reducers/dependencies, ledger reporting, and tests. Link its **PiseKit** product to the app target once in Xcode as described in the companion documentation.
+- Shows usage totals/charts, project/model/branch/tag breakdowns, and skill load events from the existing local ledgers.
+- Local-only, read-only, non-sandboxed; no account, network requests, or ledger changes. Built separately from the Pi package.
+- See [`mac/README.md`](mac/README.md) for building, testing, reporting semantics, and limitations.
+
 ### Skill upkeep
 
 - `extensions/skills/update-agent-skills.ts` reads the skills manifest and checks pinned agent skills for newer tags at session start; each remote check times out after 10 seconds.
@@ -137,6 +146,7 @@ src/shared/        shared implementation helpers used by extensions
 skills/            agent workflows shipped by this package
 themes/            Pi themes shipped by this package
 docs/              design notes and user-facing docs
+mac/               Pise macOS app shell and TCA-powered PiseKit Swift package
 ```
 
 ## Development

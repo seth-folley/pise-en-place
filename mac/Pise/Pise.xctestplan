@@ -1,0 +1,16 @@
+{
+  "configurations": [
+    { "id": "91456F35-4CFA-4134-9AB5-AE6F7E982E13", "name": "Default", "options": {} }
+  ],
+  "defaultOptions": {},
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:../PiseKit",
+        "identifier": "PiseKitTests",
+        "name": "PiseKitTests"
+      }
+    }
+  ],
+  "version": 1
+}
