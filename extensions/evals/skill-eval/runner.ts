@@ -1,6 +1,7 @@
 import { createAgentSession, DefaultResourceLoader, getAgentDir, ModelRuntime, SessionManager, SettingsManager, type ExtensionFactory, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { AgentCompletionTracker } from "../../../src/shared/agent-completion.ts";
 import { getGitUsageProjectAttribution, mergeUsageProjectAttribution, normalizeUsageTags, readUsageConfig, writeUsageConfig } from "../../../src/shared/usage-attribution.ts";
 import type { ResolvedSkillEvalConfig } from "./config.ts";
 import { createChildUI } from "./child-ui.ts";
@@ -138,6 +139,7 @@ async function runVariant(
 	let cancelled = false;
 	let policyViolation = false;
 	let resourcesWritten = false;
+	const completion = new AgentCompletionTracker();
 	const deadline = new ActiveDeadline(resolved.config.limits.timeoutSeconds * 1000);
 	const agentDir = options.agentDir ?? getAgentDir();
 
@@ -223,7 +225,10 @@ async function runVariant(
 		variant.startedAt = new Date().toISOString();
 		await storage.save();
 		recorder.emit("variant_started", { model: resolved.config.agent.model, thinking: session.thinkingLevel, tools: session.getActiveToolNames(), workspace });
-		const unsubscribe = session.subscribe((event) => recorder.recordSdkEvent(event));
+		const unsubscribe = session.subscribe((event) => {
+			completion.observe(event);
+			recorder.recordSdkEvent(event);
+		});
 		const abortListener = () => { cancelled = true; void session?.abort(); };
 		if (options.signal.aborted) abortListener();
 		else options.signal.addEventListener("abort", abortListener, { once: true });
@@ -256,10 +261,17 @@ async function runVariant(
 			deadline.stop();
 		}
 
-		status = interactionBlocked ? "interaction_blocked" : cancelled ? "cancelled" : timedOut ? "timed_out" : "completed";
-		if (status !== "completed") variant.failurePhase ??= variant.phase;
-		if (policyViolation) recorder.emit("variant_completed", { policyFindings: variant.policyFindings.length });
-		else recorder.emit(status === "completed" ? "variant_completed" : `variant_${status}`);
+		const outcome = completion.outcome({ aborted: cancelled });
+		status = interactionBlocked ? "interaction_blocked" : cancelled ? "cancelled" : timedOut ? "timed_out"
+			: outcome === "aborted" ? "cancelled" : outcome === "error" ? "agent_error" : outcome;
+		if (status !== "completed") {
+			variant.failurePhase ??= variant.phase;
+			if (!interactionBlocked && !timedOut) {
+				variant.error = completion.description(outcome);
+				retainError(new Error(variant.error));
+			}
+		}
+		recorder.emit(`variant_${status}`, { policyFindings: variant.policyFindings.length, error: variant.error });
 	} catch (error) {
 		status = interactionBlocked ? "interaction_blocked" : cancelled || options.signal.aborted ? "cancelled" : timedOut ? "timed_out" : "harness_error";
 		variant.failurePhase ??= variant.phase;
@@ -299,7 +311,7 @@ async function runVariant(
 		if (session) {
 			try {
 				setPhase("capture_session_evidence");
-				await recorder.finalizeSession(session, metrics);
+				await recorder.finalizeSession(session, metrics, completion.finalText);
 				if (session.sessionFile) await chmod(session.sessionFile, 0o600);
 				for (const key of ["session", "transcript", "systemPrompts", "toolCalls", "finalResponse", "metrics"] as const) {
 					variant.artifacts[key].completeness = "complete";

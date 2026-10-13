@@ -298,8 +298,8 @@ export class CoordinationRuntime {
         await client?.close();
     }
     agentStarted(context: ExtensionContext, signal?: AbortSignal): void { if (this.current(context)) { this.ctx = context; this.runtime = this.interactiveFlows ? "waiting-for-user" : "working"; this.automatic?.agentStarted(signal); } }
-    agentEnded(context: ExtensionContext, messages: readonly { role: string; stopReason?: string }[]): void { if (this.current(context)) this.automatic?.agentEnded(messages); }
-    async agentSettled(context: ExtensionContext): Promise<void> { if (this.current(context)) { this.ctx = context; this.runtime = this.uiPrompts || this.interactiveFlows ? "waiting-for-user" : context.isIdle() ? "idle" : "working"; await this.automatic?.settled(); } }
+    agentEnded(context: ExtensionContext, messages: readonly { role: string; stopReason?: string; errorMessage?: string }[]): void { if (this.current(context)) this.automatic?.agentEnded(messages); }
+    async agentSettled(context: ExtensionContext, aborted?: boolean): Promise<void> { if (this.current(context)) { this.ctx = context; this.runtime = this.uiPrompts || this.interactiveFlows ? "waiting-for-user" : context.isIdle() ? "idle" : "working"; await this.automatic?.settled(aborted); } }
     promptStarted(context: ExtensionContext): void { if (this.current(context)) { this.uiPrompts++; this.runtime = "waiting-for-user"; } }
     promptEnded(context: ExtensionContext): void { if (this.current(context)) { this.uiPrompts = Math.max(0, this.uiPrompts - 1); this.runtime = this.uiPrompts || this.interactiveFlows ? "waiting-for-user" : context.isIdle() ? "idle" : "working"; if (!this.interactiveFlows) this.automatic?.kick(); } }
 }

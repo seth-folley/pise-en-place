@@ -77,6 +77,9 @@ export function failureHints(run: RunRecord): string[] {
 export function failureSummary(run: RunRecord): string {
 	const phase = run.failurePhase ? ` during ${run.failurePhase.replaceAll("_", " ")}` : "";
 	switch (run.status) {
+		case "agent_error": return `Evaluated agent failed${phase}.`;
+		case "truncated": return `Evaluated agent response was truncated${phase}.`;
+		case "incomplete": return `Evaluation lacks successful completion evidence${phase}.`;
 		case "timed_out": return `Evaluation timed out${phase}.`;
 		case "interaction_blocked": return `Evaluation stopped at a blocked interaction${phase}.`;
 		case "policy_stopped": return `Evaluation stopped after a tool-policy finding${phase}.`;

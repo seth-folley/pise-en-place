@@ -5,8 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import type { Message } from "@earendil-works/pi-ai";
 import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { AgentCompletionTracker, type CompletionEvent } from "../../../src/shared/agent-completion.ts";
 import { getDisabledSkillDirectories, type DisabledSkillDirectory } from "../../../src/shared/disabled-skill-access.ts";
 import {
     isSkillBlockingDisabled,
@@ -21,6 +21,7 @@ import { getSubagentDefinitions, type SubagentDefinition } from "./agents.ts";
 import { disabledSkillDirectoriesEnvironmentVariable } from "./disabled-skill-guard.ts";
 import { loadSubagentConfig, type ResolvedSubagentConfig } from "./config.ts";
 import { createSubagentWidget } from "./widget.ts";
+import { subagentOutcome, subagentOutcomeLabel, subagentResultText } from "./completion.ts";
 import { formatSubagentSessionRuns, getSubagentSessionRuns, subagentSessionEntryType, type SubagentSessionRun } from "./sessions.ts";
 import { renderSubagentCall, renderSubagentResult, type SubagentToolDetails, type SubagentToolResult } from "./tool-renderer.ts";
 
@@ -57,19 +58,9 @@ function invocation(args: string[]): { command: string; args: string[] } {
     return { command: "pi", args };
 }
 
-function finalOutput(messages: Message[]): { output: string; stopReason?: string } {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-        const message = messages[index];
-        if (message.role !== "assistant") continue;
-        const text = message.content.find((part) => part.type === "text");
-        if (text?.type === "text") return { output: text.text, stopReason: message.stopReason };
-    }
-    return { output: "" };
-}
-
 function formatResult(result: Result): string {
-    const status = result.exitCode === 0 && result.stopReason !== "error" ? "completed" : "failed";
-    const output = result.output || result.stderr || "(no output)";
+    const status = subagentOutcomeLabel(result);
+    const output = subagentResultText(result);
     return `### [${result.agent}] ${status}\n\n${output}`;
 }
 
@@ -130,18 +121,23 @@ async function runSubagent(
             });
             let stdout = "";
             let aborted = false;
+            const completion = new AgentCompletionTracker();
             const consumeLine = (line: string) => {
                 try {
-                    const event = JSON.parse(line) as { type?: string; message?: Message; toolName?: string };
+                    const event = JSON.parse(line) as CompletionEvent & { toolName?: string };
+                    completion.observe(event);
+                    if (event.type === "agent_start") {
+                        result.output = "";
+                        result.stopReason = undefined;
+                    }
                     if (event.type === "tool_execution_start" && event.toolName) {
                         result.activity = event.toolName;
                         update(result);
                         return;
                     }
                     if (event.type !== "message_end" || !event.message || event.message.role !== "assistant") return;
-                    const next = finalOutput([event.message]);
-                    result.output = next.output;
-                    result.stopReason = next.stopReason;
+                    result.output = completion.finalText;
+                    result.stopReason = completion.stopReason;
                     result.activity = "finalizing response";
                     update(result);
                 } catch {
@@ -158,9 +154,15 @@ async function runSubagent(
             childProcess.on("error", (error) => { result.stderr += error.message; });
             childProcess.on("close", (code) => {
                 if (stdout.trim()) consumeLine(stdout);
+                signal?.removeEventListener("abort", abort);
                 result.exitCode = aborted ? 1 : (code ?? 1);
-                if (aborted) result.stderr ||= "Subagent aborted.";
-                result.activity = result.exitCode === 0 && result.stopReason !== "error" ? "complete" : "failed";
+                result.output = completion.finalText;
+                result.stopReason = completion.stopReason;
+                result.outcome = completion.outcome({ aborted, exitCode: result.exitCode });
+                if (result.outcome !== "completed") {
+                    result.stderr = [result.stderr.trim(), completion.description(result.outcome)].filter(Boolean).join("\n");
+                }
+                result.activity = subagentOutcomeLabel(result);
                 resolve();
             });
             const abort = () => { aborted = true; childProcess.kill("SIGTERM"); };
@@ -274,17 +276,18 @@ export default function (pi: ExtensionAPI) {
                         completedAt: new Date().toISOString(),
                         exitCode: result.exitCode,
                         ...(result.stopReason ? { stopReason: result.stopReason } : {}),
+                        outcome: result.outcome,
                     };
                     pi.appendEntry(subagentSessionEntryType, run);
                 }
                 reportProgress();
             });
 
-            const failures = results.filter((result) => result.exitCode !== 0 || result.stopReason === "error");
+            const failures = results.filter((result) => subagentOutcome(result) !== "completed");
             const content = mode === "single"
                 ? formatResult(results[0])
                 : `Parallel: ${results.length - failures.length}/${results.length} completed\n\n${results.map((result) => formatResult({ ...result, output: truncate(result.output) })).join("\n\n---\n\n")}`;
-            return { content: [{ type: "text", text: content }], details: { mode, results } satisfies Details, isError: mode === "single" && failures.length > 0 };
+            return { content: [{ type: "text", text: content }], details: { mode, results } satisfies Details, isError: failures.length > 0 };
         },
     });
 }

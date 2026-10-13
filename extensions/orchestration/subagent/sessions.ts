@@ -1,3 +1,6 @@
+import { isAgentCompletionOutcome, type AgentCompletionOutcome } from "../../../src/shared/agent-completion.ts";
+import { subagentOutcomeLabel } from "./completion.ts";
+
 export const subagentSessionEntryType = "subagent-session";
 
 export type SubagentSessionRun = {
@@ -12,6 +15,7 @@ export type SubagentSessionRun = {
     completedAt: string;
     exitCode: number;
     stopReason?: string;
+    outcome?: AgentCompletionOutcome;
 };
 
 type SessionEntry = {
@@ -32,7 +36,8 @@ function isSubagentSessionRun(value: unknown): value is SubagentSessionRun {
         && typeof run.sessionDir === "string"
         && typeof run.startedAt === "string"
         && typeof run.completedAt === "string"
-        && typeof run.exitCode === "number";
+        && typeof run.exitCode === "number"
+        && (run.outcome === undefined || isAgentCompletionOutcome(run.outcome));
 }
 
 /** Extract persisted child-session links from a parent Pi session. */
@@ -59,7 +64,7 @@ export function formatSubagentSessionRuns(runs: SubagentSessionRun[]): string {
     return [
         `Retained subagent sessions (${runs.length})`,
         ...runs.map((run, index) => {
-            const status = run.exitCode === 0 && run.stopReason !== "error" ? "completed" : "failed";
+            const status = subagentOutcomeLabel(run);
             return `${index + 1}. ${run.agent} — ${status}\n   ${resumeSubagentSessionCommand(run)}`;
         }),
     ].join("\n");

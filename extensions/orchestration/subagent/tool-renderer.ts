@@ -1,7 +1,8 @@
 import { Container, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { subagentOutcome, subagentOutcomeLabel, subagentResultText, type SubagentCompletion } from "./completion.ts";
 
 export type SubagentToolTask = { agent: string; task: string };
-export type SubagentToolResult = SubagentToolTask & { exitCode: number; stopReason?: string; activity?: string; output?: string; stderr?: string };
+export type SubagentToolResult = SubagentToolTask & SubagentCompletion & { activity?: string; output?: string; stderr?: string };
 export type SubagentToolDetails = { mode: "single" | "parallel"; results: SubagentToolResult[] };
 
 type Theme = {
@@ -18,7 +19,7 @@ export function tasksFromArgs(args: ToolArgs): SubagentToolTask[] {
 export function subagentStatus(results: SubagentToolResult[], mode: "single" | "parallel"): string {
     if (!results.length) return mode === "parallel" ? "0 parallel" : "starting";
     const complete = results.filter((result) => result.exitCode !== -1).length;
-    const failures = results.filter((result) => result.exitCode !== -1 && (result.exitCode !== 0 || result.stopReason === "error")).length;
+    const failures = results.filter((result) => result.exitCode !== -1 && subagentOutcome(result) !== "completed").length;
     if (complete < results.length) return mode === "parallel" ? `${results.length} parallel` : "running";
     if (failures) return `${complete - failures}/${results.length} complete · ${failures} failed`;
     return `${complete}/${results.length} complete`;
@@ -76,12 +77,12 @@ export function renderSubagentResult(
 
     let text = "";
     for (const item of details.results) {
-        const failed = item.exitCode !== -1 && (item.exitCode !== 0 || item.stopReason === "error");
+        const failed = item.exitCode !== -1 && subagentOutcome(item) !== "completed";
         const icon = item.exitCode === -1 ? theme.fg("warning", "◌") : failed ? theme.fg("error", "✗") : theme.fg("success", "✓");
-        const statusText = item.exitCode === -1 ? item.activity ?? "running" : failed ? "failed" : "completed";
+        const statusText = item.exitCode === -1 ? item.activity ?? "running" : subagentOutcomeLabel(item);
         text += `${icon} ${theme.fg("accent", theme.bold(item.agent))} ${theme.fg("muted", `· ${statusText}`)}\n`;
         text += `  ${theme.fg("muted", "Task:")} ${theme.fg("dim", item.task)}\n`;
-        const output = item.output || item.stderr || (item.exitCode === -1 ? "" : "(no response)");
+        const output = item.exitCode === -1 ? item.output || item.stderr || "" : subagentResultText(item);
         if (output) text += `  ${theme.fg("muted", "Result:")}\n${theme.fg("toolOutput", output)}\n`;
     }
     return new Text(text.trimEnd(), 0, 0);

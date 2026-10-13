@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { createSubagentWidget } from "../../extensions/orchestration/subagent/widget.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { visibleWidth, type Component } from "@earendil-works/pi-tui";
 import coordination from "../../extensions/coordination/index.ts";
 import { startBroker } from "../../src/coordination/broker.ts";
@@ -42,9 +42,13 @@ function fakeSession(sessionId: string, sessionFile: string, entries: Entry[] = 
     }));
     const context = {
         mode: "tui", hasUI: true, isIdle: () => idle,
+        tools: [],
+        executeTool: vi.fn<ExtensionToolContext["executeTool"]>(async () => {
+            throw new Error("Nested tool execution is not implemented by this fixture");
+        }),
         sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries },
         ui: { setWidget, notify, custom, confirm: async () => approval, select: async () => undefined, editor: async () => undefined },
-    } as unknown as ExtensionCommandContext;
+    } as unknown as ExtensionCommandContext & ExtensionToolContext;
     const pi = {
         on(name: string, handler: Listener) { events.set(name, handler); },
         registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
@@ -195,6 +199,19 @@ describe("Pi extension lifecycle and manual-only boundaries", () => {
         expect(JSON.stringify(s.app.entries)).not.toContain('"token"');
         const schemas = JSON.stringify([...s.app.tools.values()].map((tool) => tool.parameters));
         expect(schemas).not.toMatch(/token|control|credential/i);
+    });
+    it("forwards settlement cancellation even after a successful-looking agent_end", async () => {
+        const s = await setup(); await s.app.command("join catalog --name app --role worker");
+        const b = await controlCall(s.paths, "join", { room: "catalog", name: "backend", role: "worker", sessionId: "backend-session" });
+        const client = await TeamClient.connect(s.paths.socket, { roomId: b.roomId, participantId: b.participantId, sessionId: b.sessionId, token: b.token });
+        cleanups.push(() => client.close());
+        const status = await client.call("status", { roomId: b.roomId });
+        await client.call("send", { roomId: b.roomId, idempotencyKey: "settlement-abort", recipients: [status.participants.find(p => p.name === "app")!.id], type: "question", subject: "Abort", body: "Existing assignment" });
+        await expect.poll(() => s.app.sendMessage.mock.calls.length).toBe(1);
+        s.app.setIdle(false); await s.app.emit("agent_start");
+        await s.app.emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+        s.app.setIdle(true); await s.app.emit("agent_settled", { aborted: true });
+        expect(s.broker.store.db.prepare("SELECT state,outcome FROM activations").get()).toMatchObject({ state: "uncertain", outcome: "aborted" });
     });
     it("automatic delivery waits for all nested user prompts to close", async () => {
         const s = await setup(); await s.app.command("join catalog --name app --role worker");

@@ -156,9 +156,8 @@ export class VariantRecorder {
 		await writeFile(path.join(this.variantDir, "resources.json"), `${JSON.stringify(resources, null, 2)}\n`, { mode: 0o600 });
 	}
 
-	async finalizeSession(session: AgentSession, metrics: VariantMetrics): Promise<void> {
+	async finalizeSession(session: AgentSession, metrics: VariantMetrics, finalResponse: string): Promise<void> {
 		await this.queue;
-		const finalResponse = session.getLastAssistantText() ?? "";
 		await writeFile(path.join(this.variantDir, "final-response.md"), finalResponse, { mode: 0o600 });
 		await writeFile(path.join(this.variantDir, "metrics.json"), `${JSON.stringify(metrics, null, 2)}\n`, { mode: 0o600 });
 

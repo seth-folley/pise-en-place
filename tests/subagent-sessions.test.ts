@@ -12,6 +12,7 @@ const run: SubagentSessionRun = {
     startedAt: "2026-03-10T10:00:00.000Z",
     completedAt: "2026-03-10T10:01:00.000Z",
     exitCode: 0,
+    stopReason: "stop",
 };
 
 describe("retained subagent sessions", () => {
@@ -21,6 +22,14 @@ describe("retained subagent sessions", () => {
             { type: "custom", customType: "subagent-session", data: { version: 1 } },
             { type: "custom", customType: "subagent-session", data: run },
         ])).toEqual([run]);
+    });
+
+    it.each(["truncated", "aborted", "incomplete", "error"] as const)("preserves retained %s outcomes over a normal-looking stop reason", (outcome) => {
+        expect(formatSubagentSessionRuns([{ ...run, outcome }])).toContain(`scout — ${outcome === "error" ? "failed" : outcome}`);
+    });
+
+    it("does not label legacy links with missing stop evidence completed", () => {
+        expect(formatSubagentSessionRuns([{ ...run, stopReason: undefined }])).toContain("scout — incomplete");
     });
 
     it("formats a command that uses the isolated session directory", () => {

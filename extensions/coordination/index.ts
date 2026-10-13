@@ -15,7 +15,7 @@ export default function coordination(pi: ExtensionAPI) {
     pi.on("session_shutdown", () => runtime.shutdown());
     pi.on("agent_start", (event, context) => runtime.agentStarted(context, context.signal));
     pi.on("agent_end", (event, context) => runtime.agentEnded(context, event.messages));
-    pi.on("agent_settled", (_event, context) => runtime.agentSettled(context));
+    pi.on("agent_settled", (event, context) => runtime.agentSettled(context, event.aborted));
     pi.on("ui_prompt_start", (_event, context) => runtime.promptStarted(context));
     pi.on("ui_prompt_end", (_event, context) => runtime.promptEnded(context));
 }

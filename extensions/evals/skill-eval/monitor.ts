@@ -17,6 +17,9 @@ const statusGlyph: Record<string, string> = {
 	preparing: "◌",
 	running: "●",
 	completed: "✓",
+	agent_error: "✗",
+	truncated: "!",
+	incomplete: "?",
 	timed_out: "⌛",
 	interaction_blocked: "?",
 	policy_finding: "!",
@@ -73,7 +76,7 @@ export class SkillEvalMonitor implements Component {
 					this.variantPhases.set(event.variantId, this.activePhase);
 					if (this.activePhase === "settled") {
 						this.variantFinishedAt.set(event.variantId, this.eventTime(event));
-						if (this.statuses.get(event.variantId) === "running") this.statuses.set(event.variantId, "completed");
+						if (this.statuses.get(event.variantId) === "running") this.statuses.set(event.variantId, "incomplete");
 					}
 				}
 			}
@@ -85,6 +88,10 @@ export class SkillEvalMonitor implements Component {
 		if (event.variantId) {
 			const status = event.kind === "variant_preparing" ? "preparing"
 				: event.kind === "variant_started" ? "running"
+				: event.kind === "variant_completed" ? "completed"
+				: event.kind === "variant_agent_error" ? "agent_error"
+				: event.kind === "variant_truncated" ? "truncated"
+				: event.kind === "variant_incomplete" ? "incomplete"
 				: event.kind === "variant_timed_out" ? "timed_out"
 				: event.kind === "variant_interaction_blocked" ? "interaction_blocked"
 				: event.kind === "variant_cancelled" ? "cancelled"
@@ -101,7 +108,7 @@ export class SkillEvalMonitor implements Component {
 			this.scrollFromBottom = 0;
 		}
 		this.consumeSdkEvent(event);
-		if (/retry|compaction|policy_violation|timed_out|interaction_blocked|harness_error|cancelled/.test(event.kind)) {
+		if (/retry|compaction|policy_violation|timed_out|interaction_blocked|harness_error|cancelled|agent_error|truncated|incomplete/.test(event.kind)) {
 			this.transcript.push(new Text(this.theme.fg("warning", `• ${event.kind.replaceAll("_", " ")}`), 1, 0));
 		}
 		this.tui.requestRender();
@@ -117,7 +124,7 @@ export class SkillEvalMonitor implements Component {
 		this.settled = result;
 		this.finishedAt = Date.now();
 		for (const variant of result.storage.record.variants) {
-			this.statuses.set(variant.id, variant.policyFindings.length > 0 ? "policy_finding" : variant.status);
+			this.statuses.set(variant.id, variant.policyFindings.length > 0 && variant.status === "completed" ? "policy_finding" : variant.status);
 		}
 		this.tui.requestRender();
 	}
@@ -233,7 +240,7 @@ export class SkillEvalMonitor implements Component {
 		const start = Math.max(0, Math.min(activeIndex - 3, entries.length - 8));
 		return entries.slice(start, start + 8).map(([id, status]) => {
 			const active = id === this.activeVariant ? this.theme.fg("accent", "›") : " ";
-			const color = status === "completed" ? "success" : status === "harness_error" ? "error" : status === "running" ? "accent" : status === "policy_finding" ? "warning" : "muted";
+			const color = status === "completed" ? "success" : status === "harness_error" || status === "agent_error" ? "error" : status === "running" ? "accent" : status === "policy_finding" ? "warning" : "muted";
 			const detail = this.variantPhaseDescription(status, this.variantPhases.get(id));
 			const duration = this.variantDuration(id, status);
 			return truncateToWidth(`${active} ${this.theme.fg(color, statusGlyph[status] ?? "•")} ${id}  ${status.replaceAll("_", " ")}${detail ? ` — ${detail}` : ""}${duration ? ` • ${duration}` : ""}`, width);
@@ -245,7 +252,7 @@ export class SkillEvalMonitor implements Component {
 		if (!startedAt) return undefined;
 		const finishedAt = this.variantFinishedAt.get(id);
 		const seconds = ((finishedAt ?? Date.now()) - startedAt) / 1000;
-		return `${finishedAt ? "Completed" : "Running"}: ${seconds.toFixed(1)} seconds`;
+		return `${finishedAt ? "Finished" : "Running"}: ${seconds.toFixed(1)} seconds`;
 	}
 
 	private eventTime(event: MonitorEvent): number {
@@ -254,7 +261,7 @@ export class SkillEvalMonitor implements Component {
 	}
 
 	private variantPhaseDescription(status: MonitorVariantStatus, phase?: ExecutionPhase): string | undefined {
-		if (phase === "prompt") return status === "completed" ? "agent finished" : "agent working";
+		if (phase === "prompt") return status === "running" ? "agent working" : status === "completed" ? "agent finished" : "agent stopped";
 		if (phase === "capture_git_evidence") return "agent finished • saving Git evidence";
 		if (phase === "capture_session_evidence") return "agent finished • saving session evidence";
 		if (phase === "teardown") return "agent finished • tearing down";

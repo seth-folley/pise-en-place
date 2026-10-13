@@ -98,9 +98,9 @@ Each run:
 4. Captures the agent's Git-visible patch, transcript, tools, resources, timing, tokens, and provider cost when available.
 5. Generates Markdown and HTML reports from retained artifacts, then deletes disposable workspaces.
 
-Operational statuses and policy findings do not imply semantic pass or failure. A timeout, cancellation, harness error, blocked interaction, or disallowed-tool finding prevents later variants from starting.
+Operational statuses and policy findings do not imply semantic pass or failure. `completed` requires a settled run and a final assistant response with stop reason `stop`; a resolved SDK prompt alone is not completion evidence. Provider failures use `agent_error`, output-limit responses use `truncated`, and missing settlement or an unfinished final response uses `incomplete`. Explicit settlement abortion uses `cancelled`, including cancellation during startup. These statuses retain partial evidence and stop later variants; harness failures remain `harness_error`. Automatic Pi retries can still recover before final settlement. Timeout continuation/retry follows the explicit YAML policy; cancellation, blocked interactions, and disallowed-tool findings stop later variants.
 
-Reports contain complete final responses and concise summaries with relative links to full evidence. Native Pi sessions, `transcript.md`, tool JSONL, lifecycle events, and patches remain separate and untruncated. Artifacts are retained until manually removed.
+Reports contain the authoritative final attempt's response and concise summaries with relative links to full evidence. A textless abort leaves `final-response.md` empty rather than substituting an earlier answer; earlier attempts remain in the native session and transcript. Native Pi sessions, `transcript.md`, tool JSONL, lifecycle events, and patches remain separate and untruncated. Artifacts are retained until manually removed.
 
 ## Diagnose a stopped run
 

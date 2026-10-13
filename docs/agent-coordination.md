@@ -8,7 +8,7 @@ Design: [HTML architecture](agent-coordination-communication.html). Wire/storage
 
 - macOS/Linux; Unix sockets only.
 - Node **24.15+**, using built-in `node:sqlite` (some Node versions print an experimental warning).
-- Pi **0.85.1+**; validated against 0.85.1. The package's development types were updated to that version.
+- Pi **0.87.1+** (the package's peer minimum); completion regressions are validated against **1.2.0**. Older settlement events without an explicit abort flag have a compatibility fallback; older runtimes were not retested in this update.
 - Runtime dependency `tsx` starts the TypeScript broker. Pi loads the extension itself through its normal package loader.
 
 From this package's checkout:
@@ -179,7 +179,7 @@ You do **not** need `/team deliver` or a separate prompt for each message. Ask a
 - **Idle:** coalesce arrivals briefly (200ms), reserve up to four eligible messages, insert one attributed batch, and trigger one run.
 - **Busy/compacting/retrying/waiting for user or queued local input:** leave messages in the broker. Resume scheduling only at a safe idle boundary; never steer or interrupt active work.
 - **Pause:** `/team pause local` or `/team pause room` blocks new automatic dispatch. `/team resume …` allows still-eligible pending work. A dispatch committed before pause may already be in flight and cannot be retracted.
-- **Abort/error:** aborting an automatic run pauses this participant's further automatic delivery until `/team resume local`. Final provider errors or unknown startup outcomes also pause conservatively. This does not block normal user-directed local work.
+- **Completion/abort/error:** an automatic activation succeeds only after settlement with a final assistant stop reason of `stop`. The settlement abort flag overrides a successful-looking response, including cancellation during startup. Final provider errors, truncated output-limit responses, or missing/unfinished final responses pause further delivery until `/team resume local`; earlier failed attempts may still recover before final settlement. The existing broker records truncated runs as `error` and missing/unfinished evidence as `unknown`, with diagnostic details in the notification. Older Pi settlement events without an abort flag fall back to the run's abort signal. This does not block normal user-directed local work.
 - **Authority:** batches are peer input, not user permission. No scope expansion, unrelated delegation, permission grants, deployment approval, or safety-confirmation bypass.
 
 **Durable budget:** 100 automatic activations per room per rolling hour, shared across all recipients. There is no lifetime thread cap. A batch consumes one room activation—not one per message; thread associations remain in the audit ledger without limiting the discussion. Reservations and uncertain outcomes count conservatively; only an explicitly proven not-inserted cancellation (including persisted-evidence reconciliation before dispatch) refunds a reservation. Restarts/reloads/rejoin never reset budgets. The rolling room allowance recovers as earlier reservations age out. Resume does not reset limits. The widget/status shows budget-blocked messages as needing human attention; use normal human-directed inspection/work while the room allowance is exhausted. These are activation caps, **not dollar/token caps**: one run may contain multiple model turns and tool calls.

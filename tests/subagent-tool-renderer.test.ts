@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createSubagentWidget } from "../extensions/orchestration/subagent/widget.ts";
 import { renderSubagentResult, subagentStatus, tasksFromArgs, type SubagentToolResult } from "../extensions/orchestration/subagent/tool-renderer.ts";
 
 const tasks: SubagentToolResult[] = [
@@ -14,8 +15,20 @@ describe("subagent tool renderer", () => {
 
     it("summarizes running, successful, and failed work for the header", () => {
         expect(subagentStatus(tasks, "parallel")).toBe("2 parallel");
-        expect(subagentStatus(tasks.map((task) => ({ ...task, exitCode: 0 })), "parallel")).toBe("2/2 complete");
-        expect(subagentStatus([{ ...tasks[0], exitCode: 0 }, { ...tasks[1], exitCode: 1 }], "parallel")).toBe("1/2 complete · 1 failed");
+        expect(subagentStatus(tasks.map((task) => ({ ...task, exitCode: 0, stopReason: "stop" })), "parallel")).toBe("2/2 complete");
+        expect(subagentStatus([{ ...tasks[0], exitCode: 0, stopReason: "stop" }, { ...tasks[1], exitCode: 1 }], "parallel")).toBe("1/2 complete · 1 failed");
+    });
+
+    it.each(["truncated", "aborted", "incomplete"] as const)("shows %s results as unsuccessful in headers and expanded rows", (outcome) => {
+        const result = { ...tasks[0], exitCode: 0, outcome };
+        expect(subagentStatus([result], "single")).toBe("0/1 complete · 1 failed");
+        const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+        const component = renderSubagentResult({ content: [], details: { mode: "single", results: [result] } }, { expanded: true }, theme, { state: {} });
+        expect(component.render(120).join("\n")).toContain(`scout · ${outcome}`);
+        const widget = createSubagentWidget([{ ...result, activity: "complete" }])({}, theme).render(120).join("\n");
+        expect(widget).toContain("0/1 complete");
+        expect(widget).toContain(outcome);
+        expect(widget).not.toContain("✓");
     });
 
     it("shows each subagent response alongside its delegated task when expanded", () => {

@@ -353,6 +353,9 @@ retry_completed
 compaction_started
 compaction_completed
 variant_completed
+variant_agent_error
+variant_truncated
+variant_incomplete
 variant_timed_out
 variant_cancelled
 variant_harness_error
@@ -628,11 +631,11 @@ Each invocation creates a private, versioned directory under `reviews/<UTC-basic
 The harness does not label an agent answer as semantically passed or failed. The separate reviewer skill may assign semantic outcomes afterward using retained evidence. V1 execution records operational status and policy findings:
 
 ```text
-executionStatus: completed | timed_out | interaction_blocked | cancelled | harness_error
+executionStatus: completed | agent_error | truncated | incomplete | timed_out | interaction_blocked | policy_stopped | cancelled | harness_error
 policyFindings: tool_policy_violation[]
 ```
 
-A `completed` status means only that Pi reached a settled terminal response. No file changes, an incorrect answer, or ordinary tool errors do not change that status. Cost is recorded but not enforced in V1.
+A `completed` status requires settlement evidence and a final assistant stop reason of `stop`; it does not establish semantic correctness. A settled provider error is `agent_error`, an output-limit response is `truncated`, and absent settlement or an unfinished/missing final response is `incomplete`. The settlement abort flag maps to `cancelled`, even if earlier text appeared successful. Only the final attempt is classified after Pi's automatic retries settle. These unsuccessful outcomes retain evidence and prevent later variants from starting. No file changes, an incorrect answer, or ordinary tool errors do not change a normally completed status. Cost is recorded but not enforced in V1.
 
 ### Preparation harness error
 

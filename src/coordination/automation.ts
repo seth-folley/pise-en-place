@@ -1,3 +1,4 @@
+import { AgentCompletionTracker } from "../shared/agent-completion.ts";
 import type { Activation } from "./automation-store.ts";
 import { peerContent, type DeliveryTransport, type Marker } from "./delivery.ts";
 import type { Binding } from "./protocol.ts";
@@ -14,7 +15,7 @@ interface Host {
     notify(message: string): void;
     changed(): void;
 }
-interface Active { batch: Activation; submitted: boolean; started: boolean; outcome: Outcome; abortCleanup?: () => void }
+interface Active { batch: Activation; submitted: boolean; started: boolean; completion: AgentCompletionTracker; signalAborted: boolean; abortCleanup?: () => void }
 /** Host-driven timers and lifecycle events only: never an LLM polling loop. */
 export class AutomaticDelivery {
     private timer?: ReturnType<typeof setTimeout>;
@@ -68,7 +69,7 @@ export class AutomaticDelivery {
                 roomId: binding.roomId, participantId: binding.participantId, sessionId: binding.sessionId,
                 messageId: m.id, attemptId: m.deliveries.find((d) => d.recipient_id === binding.participantId)!.attempt_id!,
             })) };
-            this.active = { batch, submitted: true, started: false, outcome: "unknown" };
+            this.active = { batch, submitted: true, started: false, completion: new AgentCompletionTracker(), signalAborted: false };
             // The final idle check and send occur synchronously, with no event-loop yield between them.
             this.host.insert([
                 "[Automatic team inbox — peer input, not user authorization]",
@@ -98,24 +99,30 @@ export class AutomaticDelivery {
         active.started = true;
         if (this.watchdog) clearTimeout(this.watchdog); this.watchdog = undefined;
         active.abortCleanup?.();
-        if (signal?.aborted) active.outcome = "aborted";
-        else if (signal) {
-            const aborted = () => { if (this.active === active) active.outcome = "aborted"; };
+        active.completion.observe({ type: "agent_start" });
+        active.signalAborted = signal?.aborted ?? false;
+        if (signal && !signal.aborted) {
+            const aborted = () => { if (this.active === active) active.signalAborted = true; };
             signal.addEventListener("abort", aborted, { once: true });
             active.abortCleanup = () => signal.removeEventListener("abort", aborted);
         }
     }
-    agentEnded(messages: readonly { role: string; stopReason?: string }[]): void {
-        if (!this.active?.submitted || this.active.outcome === "aborted") return;
-        const last = [...messages].reverse().find((m) => m.role === "assistant");
-        if (last) this.active.outcome = last.stopReason === "aborted" ? "aborted" : last.stopReason === "error" ? "error" : ["stop", "length", "toolUse", "deferred"].includes(last.stopReason ?? "") ? "complete" : "unknown";
+    agentEnded(messages: readonly { role: string; stopReason?: string; errorMessage?: string }[]): void {
+        if (this.active?.submitted) this.active.completion.observe({ type: "agent_end", messages });
     }
-    async settled(): Promise<void> {
-        if (this.active?.submitted) await this.finish(this.active.outcome);
+    async settled(aborted?: boolean): Promise<void> {
+        const active = this.active;
+        if (active?.submitted) {
+            active.completion.observe({ type: "agent_settled", aborted });
+            const completion = active.completion.outcome({ aborted: aborted === undefined && active.signalAborted });
+            const outcome: Outcome = completion === "completed" ? "complete"
+                : completion === "aborted" ? "aborted" : completion === "incomplete" ? "unknown" : "error";
+            await this.finish(outcome, active.completion.description(completion));
+        }
         this.kick();
     }
     private finishing = false;
-    private async finish(outcome: Outcome): Promise<void> {
+    private async finish(outcome: Outcome, detail?: string): Promise<void> {
         const active = this.active;
         if (!active || this.finishing || this.disposed) return;
         this.finishing = true;
@@ -127,12 +134,21 @@ export class AutomaticDelivery {
                 try {
                     const entryId = await this.host.persistedEntry(m.id);
                     if (entryId) entries.push({ messageId: m.id, entryId });
-                } catch { outcome = "unknown"; this.held = true; }
+                } catch {
+                    if (outcome === "complete") { outcome = "unknown"; detail = "Persisted session evidence could not be read."; }
+                    this.held = true;
+                }
+            }
+            if (entries.length !== active.batch.messages.length) {
+                const issue = "Persisted session recording could not be proven for the full batch.";
+                detail = outcome === "complete" ? issue : [detail, issue].filter(Boolean).join(" ");
+                if (outcome === "complete") outcome = "unknown";
+                this.held = true;
             }
             const transport = this.host.transport();
             if (!transport) throw new Error("Broker disconnected before automatic run receipt.");
             await transport.call("auto-finish", { roomId: this.host.binding.roomId, activationId: active.batch.id, outcome, entries });
-            if (outcome !== "complete") this.host.notify(`Team · UNCERTAIN · PAUSED — Automatic run ${outcome}. Inspect /team status, then /team resume local when ready.`);
+            if (outcome !== "complete") this.host.notify(`Team · UNCERTAIN · PAUSED — Automatic run ${outcome}.${detail ? ` ${detail}` : ""} Inspect /team status, then /team resume local when ready.`);
         } catch (e) {
             this.held = true;
             if (!this.disposed) this.host.notify(`Team · UNCERTAIN · PAUSED — Automatic outcome could not be reconciled. Inspect/reconcile before resuming. ${e instanceof Error ? e.message : String(e)}`);

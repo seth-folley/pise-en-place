@@ -82,7 +82,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 ### Subagent orchestration
 
 - `extensions/orchestration/subagent/` gives the main agent a `subagent` tool for isolated **scout**, **researcher**, and **reviewer** work. It supports one task or independent parallel tasks (up to 8 tasks, 4 at once); package-owned definitions keep role behavior consistent.
-- Subagents are read-only by default. The reviewer can use Bash only for read-only Git inspection. The tool row shows a compact parallel/completion summary and expands to each role's exact task and status. While active, an above-editor activity tray shows each role, live tool activity, and completion/failure state; it remains visible until the parent agent finishes its turn.
+- Subagents are read-only by default. The reviewer can use Bash only for read-only Git inspection. The tool row shows a compact parallel/completion summary and expands to each role's exact task and status. Completion requires a zero exit, settlement evidence, and a final normal `stop`; aborted, failed, truncated, and incomplete children are labeled separately and retained. Mixed parallel batches preserve successful results but mark the overall tool result unsuccessful. While active, an above-editor activity tray shows each role, live tool activity, and terminal outcome; it remains visible until the parent agent finishes its turn.
 - Each subagent also saves an isolated native Pi session under `~/.pi/agent/subagent-sessions/<parent-session-id>/`. Run `/subagents` in the parent session to list retained children and copy the `pi --session-dir … --session …` command needed to inspect one. Child sessions are linked to the parent without adding their full transcripts to the parent context. Their usage session inherits the parent's active usage tags and adds `subagent` plus `subagent-<role>`.
 - Configure defaults and per-role model/thinking overrides in global `~/.pi/agent/settings.json` and optional project `.pi/settings.json`; project values override global values:
 
@@ -101,7 +101,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 - An automatically managed local Unix-socket broker owns SQLite-backed rooms, messages, inboxes, presence, and delivery recovery. Multiple isolated teams can run concurrently; the pilot joins one room per Pi session.
 - Reload Pi, then `/team join <room> --name <name> --role worker`. Joining starts/reuses the broker automatically; it shuts down after 60 seconds without connections. No normal setup/teardown commands.
 - Eligible messages automatically wake idle recipients or wait for busy agents to settle. Questions, requested replies, decision requests, and actionable handoffs are eligible; informational traffic never wakes agents.
-- Durable limits: 100 activations/room/rolling hour with no lifetime thread cap, with batching, pause-on-abort, and conservative uncertain-delivery recovery. No spawning or moderator/decision approval tools. Requires Node 24.15+ and Pi 0.85.1+ on macOS/Linux.
+- Durable limits: 100 activations/room/rolling hour with no lifetime thread cap, with batching, pause-on-abort, and conservative uncertain-delivery recovery. No spawning or moderator/decision approval tools. Requires Node 24.15+ and Pi 0.87.1+ on macOS/Linux; completion handling is tested against Pi 1.2.0.
 - See [setup, commands, privacy, recovery, and live smoke test](docs/agent-coordination.md) and [protocol v1](docs/agent-coordination-protocol.md).
 
 ### Productivity helpers

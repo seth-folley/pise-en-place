@@ -28,7 +28,7 @@ function setup(options: { persist?: boolean; start?: boolean; failEvidence?: boo
     cleanup.push(() => automatic.dispose());
     const send = () => store.dispatch(aa, "send", { roomId: a.roomId, idempotencyKey: `q-${seq++}`, type: "question", recipients: [b.participantId], subject: "Info", body: "Need information" }) as Message;
     const status = () => store.dispatch(bb, "status", { roomId: b.roomId }) as Status;
-    return { automatic, insert, notify, send, status, persisted, setReady: (v: boolean) => { ready = v; }, setFailBeforeInsert: (v: boolean) => { failBeforeInsert = v; }, setHook: (fn: (op: string) => void) => { hook = fn; }, resume: () => store.dispatch({ kind: "control" }, "pause", { roomId: b.roomId, participantId: b.participantId, paused: false }) };
+    return { store, automatic, insert, notify, send, status, persisted, setReady: (v: boolean) => { ready = v; }, setFailBeforeInsert: (v: boolean) => { failBeforeInsert = v; }, setHook: (fn: (op: string) => void) => { hook = fn; }, resume: () => store.dispatch({ kind: "control" }, "pause", { roomId: b.roomId, participantId: b.participantId, paused: false }) };
 }
 it("coalesces notifications, preserves peer authority labels, and records one persisted batch", async () => {
     const s = setup(); s.send(); s.send();
@@ -39,6 +39,77 @@ it("coalesces notifications, preserves peer authority labels, and records one pe
     s.setReady(true); s.automatic.agentEnded([{ role: "assistant", stopReason: "stop" }]); await s.automatic.settled();
     expect(s.status().participants.find((p) => p.name === "b")?.pending).toBe(0);
     s.automatic.kick(); await new Promise((r) => setTimeout(r, 30)); expect(s.insert).toHaveBeenCalledOnce();
+});
+it.each([
+    ["length", "error"], ["error", "error"], ["aborted", "aborted"],
+    ["toolUse", "unknown"], ["deferred", "unknown"], [undefined, "unknown"],
+])("pauses on final stop reason %s instead of completing its activation", async (stopReason, outcome) => {
+    const s = setup(); s.send(); s.automatic.kick();
+    await expect.poll(() => s.insert.mock.calls.length).toBe(1);
+    s.automatic.agentEnded([{ role: "assistant", stopReason }]);
+    await s.automatic.settled(false);
+    expect(s.store.db.prepare("SELECT state,outcome FROM activations").get()).toMatchObject({ state: "uncertain", outcome });
+    expect(s.automatic.isHeld).toBe(true);
+    expect(s.status().participants.find(p => p.name === "b")?.paused).toBe(1);
+    s.setReady(true); s.send(); s.automatic.kick();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(s.insert).toHaveBeenCalledOnce();
+});
+it("settlement abort overrides apparent success even before agent_start", async () => {
+    for (const start of [false, true]) {
+        const s = setup({ start, startTimeout: 5000 }); s.send(); s.automatic.kick();
+        await expect.poll(() => s.insert.mock.calls.length).toBe(1);
+        if (start) s.automatic.agentEnded([{ role: "assistant", stopReason: "stop" }]);
+        await s.automatic.settled(true);
+        expect(s.store.db.prepare("SELECT state,outcome FROM activations").get()).toMatchObject({ state: "uncertain", outcome: "aborted" });
+    }
+});
+it("a successful retry supersedes the failed attempt and its abort signal", async () => {
+    const s = setup(); s.send(); s.automatic.kick();
+    await expect.poll(() => s.insert.mock.calls.length).toBe(1);
+    const controller = new AbortController();
+    s.automatic.agentStarted(controller.signal);
+    s.automatic.agentEnded([{ role: "assistant", stopReason: "error" }]);
+    controller.abort();
+    s.automatic.agentStarted();
+    s.automatic.agentEnded([{ role: "assistant", stopReason: "stop" }]);
+    await s.automatic.settled(false);
+    expect(s.store.db.prepare("SELECT state,outcome FROM activations").get()).toMatchObject({ state: "settled", outcome: "complete" });
+    expect(s.automatic.isHeld).toBe(false);
+});
+it("missing persisted receipt evidence prevents a successful activation", async () => {
+    const s = setup({ persist: false }); s.send(); s.automatic.kick();
+    await expect.poll(() => s.insert.mock.calls.length).toBe(1);
+    s.automatic.agentEnded([{ role: "assistant", stopReason: "stop" }]);
+    await s.automatic.settled(false);
+    expect(s.store.db.prepare("SELECT state,outcome FROM activations").get()).toMatchObject({ state: "uncertain", outcome: "unknown" });
+    expect(s.automatic.isHeld).toBe(true);
+    expect(s.notify).toHaveBeenCalledWith(expect.stringContaining("recording could not be proven"));
+    expect(s.notify).not.toHaveBeenCalledWith(expect.stringContaining("completed normally"));
+});
+it("receipt read failures do not retain a contradictory successful-run description", async () => {
+    const s = setup({ failEvidence: true }); s.send(); s.automatic.kick();
+    await expect.poll(() => s.insert.mock.calls.length).toBe(1);
+    s.automatic.agentEnded([{ role: "assistant", stopReason: "stop" }]);
+    await s.automatic.settled(false);
+    expect(s.notify).toHaveBeenCalledWith(expect.stringContaining("could not be read"));
+    expect(s.notify).not.toHaveBeenCalledWith(expect.stringContaining("completed normally"));
+});
+it("explicit non-aborted settlement supersedes the low-level attempt's abort signal", async () => {
+    const s = setup(); s.send(); s.automatic.kick();
+    await expect.poll(() => s.insert.mock.calls.length).toBe(1);
+    const controller = new AbortController(); s.automatic.agentStarted(controller.signal);
+    controller.abort(); s.automatic.agentEnded([{ role: "assistant", stopReason: "stop" }]);
+    await s.automatic.settled(false);
+    expect(s.store.db.prepare("SELECT state,outcome FROM activations").get()).toMatchObject({ state: "settled", outcome: "complete" });
+});
+it("retains the abort-signal fallback when older settlement events omit aborted", async () => {
+    const s = setup(); s.send(); s.automatic.kick();
+    await expect.poll(() => s.insert.mock.calls.length).toBe(1);
+    const controller = new AbortController(); s.automatic.agentStarted(controller.signal);
+    s.automatic.agentEnded([{ role: "assistant", stopReason: "stop" }]); controller.abort();
+    await s.automatic.settled();
+    expect(s.store.db.prepare("SELECT outcome FROM activations").get()?.outcome).toBe("aborted");
 });
 it("cancels a reservation if the session becomes busy or is disposed before insertion", async () => {
     for (const dispose of [false, true]) {
