@@ -1,6 +1,7 @@
 import { createAgentSession, DefaultResourceLoader, getAgentDir, ModelRuntime, SessionManager, SettingsManager, type ExtensionFactory, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { totalSessionUsage } from "../../../src/shared/usage-accounting.ts";
 import { AgentCompletionTracker } from "../../../src/shared/agent-completion.ts";
 import { getGitUsageProjectAttribution, mergeUsageProjectAttribution, normalizeUsageTags, readUsageConfig, writeUsageConfig } from "../../../src/shared/usage-attribution.ts";
 import type { ResolvedSkillEvalConfig } from "./config.ts";
@@ -75,22 +76,15 @@ function modelParts(value: string): [string, string] {
 
 function usageMetrics(session: Awaited<ReturnType<typeof createAgentSession>>["session"]): Omit<VariantMetrics, "wallTimeMs" | "activeTimeMs" | "dialogWaitMs" | "changedFiles" | "insertions" | "deletions"> {
 	const stats = session.getSessionStats();
-	let cost = 0;
-	let costAvailable = false;
-	let toolFailures = 0;
-	for (const message of session.messages as unknown as Array<Record<string, unknown>>) {
-		if (message.role === "assistant") {
-			const total = ((message.usage as Record<string, unknown> | undefined)?.cost as Record<string, unknown> | undefined)?.total;
-			if (typeof total === "number") { cost += total; costAvailable = true; }
-		}
-		if (message.role === "toolResult" && message.isError === true) toolFailures += 1;
-	}
+	const entries = session.sessionManager.getEntries();
+	const usage = totalSessionUsage(entries);
+	const toolFailures = entries.filter(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.isError).length;
 	return {
-		inputTokens: stats.tokens.input,
-		outputTokens: stats.tokens.output,
-		cacheReadTokens: stats.tokens.cacheRead,
-		cacheWriteTokens: stats.tokens.cacheWrite,
-		cost: costAvailable ? cost : "unavailable",
+		inputTokens: usage.input,
+		outputTokens: usage.output,
+		cacheReadTokens: usage.cacheRead,
+		cacheWriteTokens: usage.cacheWrite,
+		cost: usage.costedRecords > 0 ? usage.totalCost : "unavailable",
 		toolCalls: stats.toolCalls,
 		toolFailures,
 	};
@@ -311,6 +305,10 @@ async function runVariant(
 		if (session) {
 			try {
 				setPhase("capture_session_evidence");
+				// SDK dispose() does not emit shutdown: flush/stop extension-owned capture
+				// before the final accounting/evidence snapshot (including late usage).
+				await session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
+				Object.assign(metrics, usageMetrics(session));
 				await recorder.finalizeSession(session, metrics, completion.finalText);
 				if (session.sessionFile) await chmod(session.sessionFile, 0o600);
 				for (const key of ["session", "transcript", "systemPrompts", "toolCalls", "finalResponse", "metrics"] as const) {

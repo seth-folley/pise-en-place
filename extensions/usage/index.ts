@@ -2,7 +2,7 @@
  * Pi usage ledger extension.
  *
  * Tracks token usage and estimated spending across Pi sessions by appending one
- * JSONL record per finalized assistant response to:
+ * JSONL record per new usage-bearing session entry to:
  *
  *   ~/.pi/agent/usage/ledger.jsonl
  *
@@ -22,6 +22,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { LiveUsageCapture, type SessionUsageFact, type UsageKind } from "../../src/shared/usage-accounting.ts";
 import { fetchCodexUsageLimits, formatCodexUsageLimits, type CodexUsageLimits } from "../../src/shared/codex-usage-limits.ts";
 import { mergeUsageProjectAttribution, normalizeGitRemote, normalizeUsageTags, readUsageConfig, type UsageConfig } from "../../src/shared/usage-attribution.ts";
 import { getInheritedUsageTags, getUsageSessionState, usageSessionCustomType, type UsageSessionProject, type UsageSessionState } from "../../src/shared/usage-session.ts";
@@ -41,6 +42,8 @@ type UsageLedgerRecord = {
 	version: 1;
 	id: string;
 	source: "live";
+	kind?: UsageKind;
+	usageKind?: string;
 	timestamp: string;
 	recordedAt: string;
 	sessionFile: string | null;
@@ -167,7 +170,6 @@ type SkillReadLedgerReadResult = {
 
 // Pi command handlers receive the full argument tail as a single string. This
 // tokenizer gives us shell-ish quoting so project/model names can contain spaces.
-const seenRecordIds = new Set<string>();
 
 function tokenizeArgs(args: string): string[] {
 	const tokens: string[] = [];
@@ -555,9 +557,9 @@ function formatSummary(summary: UsageSummary, tags: UsageTagBreakdown[] = []): s
 
 	const lines = [
 		titleParts.join(" • "),
-		`Cost: ${formatCost(summary.totalCost)}${summary.tokenOnlyCalls ? ` (${summary.tokenOnlyCalls} token-only calls)` : ""}`,
+		`Cost: ${formatCost(summary.totalCost)}${summary.tokenOnlyCalls ? ` (${summary.tokenOnlyCalls} token-only records)` : ""}`,
 		`Tokens: ${formatTokens(summary.totalTokens)} total  ↑${formatTokens(summary.input)}  ↓${formatTokens(summary.output)}  R${formatTokens(summary.cacheRead)}  W${formatTokens(summary.cacheWrite)}`,
-		`Calls: ${summary.calls}  Projects: ${summary.projects}  Models: ${summary.models}`,
+		`Usage records: ${summary.calls}  Projects: ${summary.projects}  Models: ${summary.models}`,
 	];
 
 	if (tags.length) lines.push("", "Tags", ...formatTagBreakdownLines(tags));
@@ -600,7 +602,7 @@ function tagBreakdown(records: UsageLedgerRecord[]): UsageTagBreakdown[] {
 function formatTagBreakdownLines(tags: UsageTagBreakdown[]): string[] {
 	return tags.map((tag) => {
 		const tokenOnly = tag.tokenOnlyCalls ? `, ${tag.tokenOnlyCalls} token-only` : "";
-		return `- ${tag.key} — ${formatCost(tag.totalCost)}, ${formatTokens(tag.totalTokens)} tokens, ${tag.calls} calls${tokenOnly}`;
+		return `- ${tag.key} — ${formatCost(tag.totalCost)}, ${formatTokens(tag.totalTokens)} tokens, ${tag.calls} records${tokenOnly}`;
 	});
 }
 
@@ -623,16 +625,16 @@ function formatProjectUsageReport(records: UsageLedgerRecord[], options: { proje
 		`Usage for project ${options.project} — ${titleForRange(report.range)}`,
 		"",
 		"Overview",
-		`Cost: ${formatCost(report.overview.totalCost)}${report.overview.tokenOnlyCalls ? ` (${report.overview.tokenOnlyCalls} token-only calls)` : ""}`,
+		`Cost: ${formatCost(report.overview.totalCost)}${report.overview.tokenOnlyCalls ? ` (${report.overview.tokenOnlyCalls} token-only records)` : ""}`,
 		`Tokens: ${formatTokens(report.overview.totalTokens)} total  ↑${formatTokens(report.overview.input)}  ↓${formatTokens(report.overview.output)}  R${formatTokens(report.overview.cacheRead)}  W${formatTokens(report.overview.cacheWrite)}`,
-		`Calls: ${report.overview.calls}  Models: ${report.overview.models}`,
+		`Usage records: ${report.overview.calls}  Models: ${report.overview.models}`,
 		"",
 		"Branches",
 	];
 
 	if (report.branches.length) {
 		for (const entry of report.branches) {
-			lines.push(`- ${entry.label} — ${entry.summary.calls} calls, ${formatTokens(entry.summary.totalTokens)} tokens, ${formatCost(entry.summary.totalCost)}`);
+			lines.push(`- ${entry.label} — ${entry.summary.calls} records, ${formatTokens(entry.summary.totalTokens)} tokens, ${formatCost(entry.summary.totalCost)}`);
 		}
 	} else {
 		lines.push("No usage records found.");
@@ -696,7 +698,7 @@ function formatReportGroupLines(groups: UsageReportGroup[], emptyText: string): 
 	if (!groups.length) return [emptyText];
 	return groups.slice(0, 10).map((group) => {
 		const tokenOnly = group.tokenOnlyCalls ? `, ${group.tokenOnlyCalls} token-only` : "";
-		return `- ${group.key} — ${formatCost(group.totalCost)}, ${formatTokens(group.totalTokens)} tokens, ${group.calls} calls${tokenOnly}`;
+		return `- ${group.key} — ${formatCost(group.totalCost)}, ${formatTokens(group.totalTokens)} tokens, ${group.calls} records${tokenOnly}`;
 	});
 }
 
@@ -709,7 +711,7 @@ function formatUsageReport(records: UsageLedgerRecord[], options: { range: Usage
 
 	const lines = [
 		titleParts.join(" • "),
-		`Total: ${formatCost(report.overview.totalCost)} across ${report.overview.calls} calls, ${formatTokens(report.overview.totalTokens)} tokens`,
+		`Total: ${formatCost(report.overview.totalCost)} across ${report.overview.calls} usage records, ${formatTokens(report.overview.totalTokens)} tokens`,
 		"",
 		"By provider",
 		...formatReportGroupLines(report.providers, "No provider usage records found."),
@@ -732,7 +734,7 @@ function formatUsageReport(records: UsageLedgerRecord[], options: { range: Usage
 		lines.push("No costed records found.");
 	}
 
-	if (report.overview.tokenOnlyCalls) lines.push(`Token-only calls: ${report.overview.tokenOnlyCalls}`);
+	if (report.overview.tokenOnlyCalls) lines.push(`Token-only records: ${report.overview.tokenOnlyCalls}`);
 	if (options.skippedLines) lines.push(`Skipped corrupt ledger lines: ${options.skippedLines}`);
 	return lines.join("\n");
 }
@@ -760,7 +762,7 @@ function formatVisualGroup(title: string, groups: UsageReportGroup[]): string[] 
 	for (const group of visible) {
 		const label = group.key.length > labelWidth ? `${group.key.slice(0, labelWidth - 1)}…` : group.key.padEnd(labelWidth);
 		const tokenOnly = group.tokenOnlyCalls ? `  token-only:${group.tokenOnlyCalls}` : "";
-		lines.push(`${label}  ${formatBar(group.totalCost, maxCost)}  ${formatCost(group.totalCost).padStart(8)}  ${formatPercent(group.totalCost, totalCost).padStart(5)}  ${formatTokens(group.totalTokens).padStart(6)} tok  ${group.calls} calls${tokenOnly}`);
+		lines.push(`${label}  ${formatBar(group.totalCost, maxCost)}  ${formatCost(group.totalCost).padStart(8)}  ${formatPercent(group.totalCost, totalCost).padStart(5)}  ${formatTokens(group.totalTokens).padStart(6)} tok  ${group.calls} records${tokenOnly}`);
 	}
 	return lines;
 }
@@ -774,7 +776,7 @@ function formatVisualUsageReport(records: UsageLedgerRecord[], options: { range:
 
 	const lines = [
 		titleParts.join(" • "),
-		`Total ${formatCost(report.overview.totalCost)} • ${report.overview.calls} calls • ${formatTokens(report.overview.totalTokens)} tokens${report.overview.tokenOnlyCalls ? ` • ${report.overview.tokenOnlyCalls} token-only calls` : ""}`,
+		`Total ${formatCost(report.overview.totalCost)} • ${report.overview.calls} usage records • ${formatTokens(report.overview.totalTokens)} tokens${report.overview.tokenOnlyCalls ? ` • ${report.overview.tokenOnlyCalls} token-only records` : ""}`,
 		"",
 		...formatVisualGroup("By project", report.projects),
 		"",
@@ -939,13 +941,9 @@ function isUsageLedgerRecord(value: any): value is UsageLedgerRecord {
 async function clearLedger(): Promise<boolean> {
 	try {
 		await fs.unlink(ledgerPath);
-		seenRecordIds.clear();
 		return true;
 	} catch (error: any) {
-		if (error?.code === "ENOENT") {
-			seenRecordIds.clear();
-			return false;
-		}
+		if (error?.code === "ENOENT") return false;
 		throw error;
 	}
 }
@@ -1071,58 +1069,18 @@ async function getCurrentUsageProject(ctx: ExtensionContext): Promise<{ project:
 	}
 }
 
-function isoFromTimestamp(timestamp: unknown): string {
-	if (typeof timestamp === "number" && Number.isFinite(timestamp)) return new Date(timestamp).toISOString();
-	if (typeof timestamp === "string") {
-		const date = new Date(timestamp);
-		if (Number.isFinite(date.getTime())) return date.toISOString();
-	}
-	return new Date().toISOString();
-}
-
-function usageMatches(a: any, b: any): boolean {
-	return (
-		a?.input === b?.input &&
-		a?.output === b?.output &&
-		a?.cacheRead === b?.cacheRead &&
-		a?.cacheWrite === b?.cacheWrite &&
-		a?.totalTokens === b?.totalTokens
-	);
-}
-
-// message_end currently gives us the message but not the session entry id. Walk
-// backward through session entries to find the just-finalized assistant message.
-function findSessionEntryId(ctx: ExtensionContext, message: any): string | null {
-	const entries = (ctx.sessionManager.getEntries?.() ?? []) as SessionEntry[];
-	for (let i = entries.length - 1; i >= 0; i--) {
-		const entry = entries[i];
-		if (entry.type !== "message" || entry.message?.role !== "assistant") continue;
-		if (entry.message === message) return entry.id ?? null;
-		if (entry.message?.timestamp === message.timestamp && entry.message?.model === message.model && usageMatches(entry.message.usage, message.usage)) {
-			return entry.id ?? null;
-		}
-	}
-	return null;
-}
-
-// Build the persistent record from Pi's assistant message. Project metadata is
-// filled in after this by getProjectInfo because it requires async git commands.
-function buildRecord(ctx: ExtensionContext, message: any, usageSession: UsageSessionState): UsageLedgerRecord {
+function buildRecord(fact: SessionUsageFact, usageSession: UsageSessionState): UsageLedgerRecord {
 	const cwd = usageSession.cwd;
 	const sessionFile = usageSession.sessionFile;
-	const sessionEntryId = findSessionEntryId(ctx, message);
-	const timestamp = isoFromTimestamp(message.timestamp);
-	const id = `${sessionFile ?? "ephemeral"}:${sessionEntryId ?? timestamp}`;
-	const usage = message.usage;
-	// Pi already decides whether a provider/model has meaningful cost metadata. Use
-	// the reported total when present, even for OAuth/subscription-backed providers;
-	// fall back to null only when Pi does not provide a numeric estimate.
-	const totalCost = typeof usage.cost?.total === "number" ? usage.cost.total : null;
+	const { sessionEntryId, timestamp } = fact;
+	const id = `${sessionFile ?? usageSession.sessionId}:${sessionEntryId}`;
 
 	return {
 		version: schemaVersion,
 		id,
 		source: "live",
+		kind: fact.kind,
+		...(fact.usageKind !== undefined ? { usageKind: fact.usageKind } : {}),
 		timestamp,
 		recordedAt: new Date().toISOString(),
 		sessionFile,
@@ -1130,17 +1088,10 @@ function buildRecord(ctx: ExtensionContext, message: any, usageSession: UsageSes
 		cwd,
 		project: usageSession.project,
 		...(usageSession.tags.length ? { tags: [...usageSession.tags] } : {}),
-		provider: message.provider ?? (ctx as any).model?.provider ?? null,
-		model: message.model ?? (ctx as any).model?.id ?? null,
-		api: message.api ?? (ctx as any).model?.api ?? null,
-		usage: {
-			input: usage.input ?? 0,
-			output: usage.output ?? 0,
-			cacheRead: usage.cacheRead ?? 0,
-			cacheWrite: usage.cacheWrite ?? 0,
-			totalTokens: usage.totalTokens ?? (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0),
-			totalCost,
-		},
+		provider: fact.provider,
+		model: fact.model,
+		api: fact.api,
+		usage: fact.usage,
 	};
 }
 
@@ -1402,7 +1353,13 @@ export default function (pi: ExtensionAPI) {
 
 	const initializeUsageSession = async (ctx: ExtensionContext): Promise<UsageSessionState> => {
 		const existing = getUsageSessionState(ctx.sessionManager.getBranch());
-		if (existing) return usageSession = existing;
+		if (existing) {
+			// Forks/clones copy attribution, not the original session's identity.
+			const sessionId = ctx.sessionManager.getSessionId();
+			usageSession = { ...existing, sessionId, sessionFile: ctx.sessionManager.getSessionFile?.() ?? null };
+			if (existing.sessionId !== sessionId || existing.sessionFile !== usageSession.sessionFile) pi.appendEntry(usageSessionCustomType, usageSession);
+			return usageSession;
+		}
 
 		const cwd = getCwd(ctx);
 		let project: ProjectInfo = { name: null, gitRemote: null, gitRoot: null, gitCommonDir: null, gitBranch: null };
@@ -1472,40 +1429,64 @@ export default function (pi: ExtensionAPI) {
 		await notifyOutput(ctx, parsed.json ? JSON.stringify({ ok: true, tags: state.tags }, null, 2) : formatTags(state.tags), parsed.json);
 	};
 
+	let capture: LiveUsageCapture | undefined;
+	let captureSessionId: string | undefined;
+	let captureTimer: ReturnType<typeof setInterval> | undefined;
+	let captureFailureReported = false;
+	const reconcile = async () => {
+		try { await capture?.reconcile(); captureFailureReported = false; }
+		catch (error: any) {
+			if (!captureFailureReported) console.warn(`Usage capture failed; will retry while this session remains open: ${error?.message ?? String(error)}`);
+			captureFailureReported = true;
+		}
+	};
 	pi.on("session_start", async (_event, ctx) => {
+		if (captureTimer) clearInterval(captureTimer);
+		captureTimer = undefined;
+		// Snapshot before any await; do not backfill resumed/forked history.
+		const baseline = [...ctx.sessionManager.getEntries()];
+		const sessionId = ctx.sessionManager.getSessionId();
+		await capture?.close();
 		await initializeUsageSession(ctx);
+		captureSessionId = sessionId;
+		captureFailureReported = false;
+		capture = new LiveUsageCapture(
+			() => ctx.sessionManager.getSessionId() === sessionId ? ctx.sessionManager.getEntries() : [],
+			fact => { const record = buildRecord(fact, usageSession!); return () => appendLedgerRecord(record); }, baseline,
+		);
+		// There is no generic extension entry-appended hook. Read-only reconciliation
+		// also captures cache warming/arbitrary usage appended after agent_settled.
+		captureTimer = setInterval(() => { void reconcile(); }, 2_000);
+		captureTimer.unref();
+		await reconcile();
 	});
-
+	pi.on("turn_end", async () => { await reconcile(); });
+	pi.on("agent_settled", async () => { await reconcile(); });
+	pi.on("session_compact", async () => { await reconcile(); });
+	pi.on("session_before_switch", async () => { await reconcile(); });
+	pi.on("session_before_fork", async () => { await reconcile(); });
 	pi.on("session_tree", async (_event, ctx) => {
+		await reconcile();
 		await initializeUsageSession(ctx);
 	});
-
 	pi.on("session_shutdown", async () => {
 		codexLimitsGeneration += 1;
 		codexLimitsAbort?.abort();
 		codexLimitsAbort = undefined;
 		codexLimitsRefresh = undefined;
-	});
-
-	pi.on("message_end", async (event, ctx) => {
-		// Only assistant responses have provider usage. Tool results and user messages
-		// are ignored; additional assistant turns caused by tool calls are counted if
-		// Pi emits usage for them.
-		if (event.message.role !== "assistant") return;
-		if (!event.message.usage) return;
-
-		const record = buildRecord(ctx, event.message, await initializeUsageSession(ctx));
-		// Protect against duplicate event delivery within this process. Cross-process
-		// dedupe is intentionally deferred unless/until we move to SQLite.
-		if (seenRecordIds.has(record.id)) return;
-		await appendLedgerRecord(record);
-		seenRecordIds.add(record.id);
+		if (captureTimer) clearInterval(captureTimer);
+		captureTimer = undefined;
+		await reconcile();
+		await capture?.close();
+		capture = undefined;
+		captureSessionId = undefined;
 	});
 
 	pi.registerCommand("usage", {
 		description: "Show cross-session token usage and estimated spending",
 		handler: async (args, ctx) => {
 			try {
+				if (capture && captureSessionId === ctx.sessionManager.getSessionId()) await reconcile();
 				if (await handleCodexLimitsCommand(args, ctx)) return;
 				const parsed = parseUsageArgs(args);
 				if (parsed.mode === "tag" || (parsed.error && tokenizeArgs(args)[0] === "tag")) {

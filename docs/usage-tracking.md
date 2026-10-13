@@ -4,7 +4,14 @@
 
 ## What it records
 
-The extension records one ledger entry for each finalized assistant response after the extension is enabled.
+The extension records one ledger row for each new usage-bearing raw session entry after tracking starts:
+
+- finalized assistant responses, including failed/aborted responses with reported usage
+- tool results, including nested classifier/image/model usage aggregated by Pi
+- compaction and branch-summary generation
+- separate `usage` entries, including cache warming and unknown future operation kinds
+
+`src/shared/usage-accounting.ts` supplies the same extraction and token/cost arithmetic to the ledger, footer, and evals. Nested tool hooks are not counted separately from their persisted parent result.
 
 Each record includes:
 
@@ -13,8 +20,9 @@ Each record includes:
 - current working directory
 - git-derived project metadata, including the local git branch when available
 - active session usage tags, when set
-- provider, model, and API
-- provider-reported usage/cost surfaced through Pi for each response
+- provider, model, and API when the entry explicitly supplies them; tools/summaries remain unattributed rather than borrowing the currently selected model
+- optional `kind` (`assistant`, `tool_result`, `compaction`, `branch_summary`, or `usage`) and `usageKind` (the arbitrary operation kind on a separate usage entry)
+- provider-reported usage/cost surfaced through Pi
 - input, output, cache read, and cache write tokens
 - total tokens
 - total estimated cost, when meaningful
@@ -35,7 +43,9 @@ Runtime data is written to:
 ~/.pi/agent/usage/ledger.jsonl
 ```
 
-This file is private runtime data and should not be committed.
+This file is private runtime data and should not be committed. Records remain **version 1** with additive optional metadata; older rows without `kind` remain readable. The macOS companion ignores unknown fields and includes all rows in its existing totals. No migration or rewrite of existing data is required.
+
+Displayed counts mean **usage records**, not exact provider-request counts: one tool or summary entry can aggregate several requests. JSON reports keep the existing `calls`, `costedCalls`, and `tokenOnlyCalls` field names for compatibility, with that same record-count meaning.
 
 ## Cost and subscription models
 
@@ -124,7 +134,7 @@ Spend reports:
 /usage report --visual
 ```
 
-`/usage report` defaults to month-to-date and groups spend by provider, model, and project. It also lists the top costed assistant responses without storing prompt or response content.
+`/usage report` defaults to month-to-date and groups spend by provider, model, and project. It also lists the top costed usage records without storing prompt, response, tool-result, or summary content.
 
 `/usage report --visual` renders a static terminal-friendly usage graph with horizontal bars for project, provider, and model spend. It can be combined with range and filter options, but not with `--json`.
 
@@ -218,11 +228,22 @@ Machine-readable output:
 /usage -h --json
 ```
 
+## Capture, deduplication, and footer totals
+
+Capture reconciles newly appended entries at persisted turn completion, settlement, compaction, tree navigation, `/usage`, and session teardown. A lightweight, read-only two-second in-memory reconciliation tick also catches usage appended after settlement without another prompt. It does not invoke an agent or call a provider. The timer is released on reload/session replacement/shutdown.
+
+On startup/resume/fork, existing entry IDs are baselined before asynchronous attribution work. Historical/copied entries are not imported. Writes are serialized and deduplicated by session identity plus entry ID, never by equal usage amounts. Failed writes retain their original attribution and retry while the session remains open. Tag changes do not retag pending rows. Clearing the ledger does not replay already observed entries.
+
+Token totals are input + output + cache read + cache write. Reasoning is already included in output, and one-hour cache writes are already included in cache write; neither is added again. Context size (`tokensBefore`) is not billed usage.
+
+The Dracula/minimal footer shows **full-session** known spend and token totals across all branches and usage sources, including entries predating extension activation. `↑` and `↓` remain input and output; `Σ` also includes cache tokens. Switching branches no longer removes already incurred spend. Context percentage/bar still describes active model context, not lifetime token consumption. The ledger remains live-only, so its captured totals need not match the full native-session totals for a resumed session.
+
 ## Notes and limitations
 
-- Tracking starts only after the extension is enabled.
-- There is no rescan of older session files in v1.
-- Ledger reports use Pi's provider-reported per-response usage/cost. `/usage openai` is the exception: it reads current subscription windows from OpenAI and does not add them to the ledger.
+- Tracking starts only after the extension is enabled; there is no historical backfill or rescan of older session files.
+- Deduplication is local to a live capture. Existing duplicate ledger rows are not silently removed; simultaneous processes recording the same native session are not transactionally deduplicated. SQLite remains the escape hatch for that requirement.
+- Unreported usage cannot be reconstructed. An abrupt process exit, or a persistent write failure followed by teardown, can lose unrecorded activity; there is no historical repair pass.
+- Ledger reports use Pi's provider-reported usage/cost. `/usage openai` is the exception: it reads current subscription windows from OpenAI and does not add them to the ledger.
 - Summaries are derived from raw JSONL records on demand.
 - If the ledger becomes too large or concurrent writes become a problem, migrate to SQLite rather than adding rollups.
 - Corrupt JSONL lines are skipped and counted instead of crashing commands.

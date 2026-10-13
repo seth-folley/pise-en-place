@@ -18,10 +18,10 @@ struct OverviewView: View {
                 if report.totals.calls == 0 {
                     ContentUnavailableView("No activity in this range", systemImage: "chart.bar", description: Text("Try a different time range or clear your filters."))
                 } else {
-                    Text("\(report.totals.calls) assistant responses • estimates available for \(report.totals.costedCalls)")
+                    Text("\(report.totals.calls) usage records • estimates available for \(report.totals.costedCalls)")
                         .font(.caption).foregroundStyle(.secondary)
                     if report.totals.unidentifiedCalls > 0 {
-                        Text("\(report.totals.unidentifiedCalls) response(s) lack session identity and aren’t counted as sessions.")
+                        Text("\(report.totals.unidentifiedCalls) record(s) lack session identity and aren’t counted as sessions.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     VStack(alignment: .leading, spacing: 8) {

@@ -14,6 +14,22 @@ struct LedgerReaderTests {
         #expect(skills.records[0].skill.name == "swiftui")
     }
 
+    @Test func acceptsSharedLegacyAndAdditionalUsageKinds() throws {
+        let repo = (0..<5).reduce(URL(fileURLWithPath: #filePath)) { url, _ in url.deletingLastPathComponent() }
+        let data = try Data(contentsOf: repo.appending(path: "tests/fixtures/usage-ledger-v1.jsonl"))
+        let result: LedgerResult<UsageRecord> = try LedgerReader.parse(data)
+        #expect(result.records.count == 5)
+        #expect(result.status.malformed == 0)
+        #expect(result.status.unsupported == 0)
+        #expect(result.records.filter { $0.modelKey == "unknown" }.count == 3)
+        let report = try Reports.build(LedgerFixtures.snapshot(usage: result.records), query: ReportQuery(),
+                                       now: LedgerFixtures.now, calendar: LedgerFixtures.calendar)
+        #expect(report.totals.calls == 5)
+        #expect(report.totals.tokens == 500)
+        #expect(report.totals.cost == 1.25)
+        #expect(report.totals.sessions == 1)
+    }
+
     @Test func isolatesBadLinesAndUnknownVersions() throws {
         var data = try LedgerFixtures.line(LedgerFixtures.usage())
         data.append(Data("not json\n{\"version\":99}\n\n{\"version\":1}\n".utf8))

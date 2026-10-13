@@ -1,6 +1,16 @@
 # Pi Usage Tracking Design Notes
 
-Temporary working doc for designing a personal Pi extension that tracks token usage and estimated spending across all sessions.
+Historical working doc for the original assistant-only usage ledger. The draft schemas/examples and development phases below describe that initial design, not the complete current capture implementation; see [usage tracking](usage-tracking.md) for the current contract.
+
+## Current implementation update (Pi 1.2)
+
+- Keep JSONL version 1, the existing path and commands, and raw token categories plus total cost only. Add optional `kind` and `usageKind` fields; old rows remain readable with no migration.
+- Share extraction/arithmetic through `src/shared/usage-accounting.ts`. Capture finalized assistant/tool-result usage, summary usage, and arbitrary separate usage entries from raw append-only history. Do not count nested tool hooks again or infer tools/summaries' provider/model from the current selection.
+- Baseline existing IDs at session startup before async work, then reconcile only new entries at lifecycle hooks and with a read-only two-second in-memory tick. This is live-session reconciliation, not historical backfill. Serialize writes and retain immutable attribution for retries; deduplicate entry identity, never equal token counts. Forks inherit attribution/tags but get their own session identity.
+- Footer totals cover the entire native session, including abandoned branches and cache tokens; context utilization remains separate. Evals snapshot all raw usage after extension shutdown/flush rather than pricing only projected assistant messages.
+- Reports/macOS labels count usage records, not exact API requests. JSON report count names remain unchanged for compatibility. TypeScript and Swift tests consume the same synthetic v1 contract fixture.
+
+The original design follows for context.
 
 ## Goal
 

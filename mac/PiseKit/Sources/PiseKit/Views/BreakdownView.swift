@@ -20,7 +20,7 @@ struct BreakdownView: View {
                 }
                 if !report.tags.isEmpty {
                     UsageRanking(title: "Tags", rows: report.tags, metric: report.query.metric, selection: selectTag)
-                    Text("A response can have several tags. These totals overlap; don’t add them together.")
+                    Text("A usage record can have several tags. These totals overlap; don’t add them together.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Divider()
@@ -31,7 +31,7 @@ struct BreakdownView: View {
                     tokenColumn("Cache read", report.totals.cacheRead)
                     tokenColumn("Cache write", report.totals.cacheWrite)
                 }
-                Text("Estimates for \(report.totals.costedCalls)/\(report.totals.calls) responses. — means no estimates; * marks a partial subtotal. Cost rankings use known estimates only.")
+                Text("Estimates for \(report.totals.costedCalls)/\(report.totals.calls) usage records. — means no estimates; * marks a partial subtotal. Cost rankings use known estimates only.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

@@ -62,14 +62,15 @@ SwiftUI previews and automated tests use synthetic data or disposable temporary 
 
 ## Reporting semantics
 
-- Schema version 1; unknown fields are ignored, unsupported versions are counted separately.
+- Schema version 1; unknown fields are ignored, unsupported versions are counted separately. Additive optional `kind`/`usageKind` metadata is compatible with older assistant-only rows. Assistant, tool/nested-model, compaction, branch-summary, and separate usage rows all contribute to existing totals. Unknown provider/model attribution remains unknown.
+- Counts mean usage-bearing records, not exact provider-request counts; a tool/summary row may aggregate several requests.
 - Records must have valid timestamps and nonnegative finite usage values. Invalid records are skipped and counted.
 - Only newline-terminated rows are committed. An unfinished final fragment is deferred, even if it happens to contain valid JSON; it is not counted as corruption.
 - Duplicate rows are retained, matching `/usage` rather than silently rewriting history.
 - Local-time calendar boundaries; Week means Monday-to-now, Month means month-to-now. Future timestamps are excluded.
 - Project grouping uses recorded Git remote, common Git directory, Git root, then cwd. Models are provider-qualified. Missing branches are `untracked` within their project.
 - Costs are Pi-reported estimates, not subscription bills or account limits. **—** means no estimate is available; **\*** marks a subtotal with missing estimates. Rankings use known estimates only, so incomplete coverage can change the order. A reported zero is not treated as missing.
-- Tag totals overlap because one response can have multiple tags. Repeated tags on the same record count once per tag.
+- Tag totals overlap because one usage record can have multiple tags. Repeated tags on the same record count once per tag.
 - Usage sessions are distinct nonempty recorded session-file identities. Skill sessions use session-file identity, with session ID as a fallback. Missing identities do not create invented sessions.
 - Skill-command and read-tool events are separate events, not deduplicated tasks. Discovery is not a load event. Counts measure adoption, not effectiveness.
 - Project attribution is honored independently in each ledger. A usage-only `.pi/usage.json` override can differ from the skill ledger's Git-derived identity; Pise does not heuristically merge those projects or rewrite attribution.
@@ -107,7 +108,7 @@ PiseKit/
   Tests/PiseKitTests/        Swift Testing suites and synthetic fixture builders
 ```
 
-Tests cover both schemas, malformed/unknown records, fractional timestamps, partial appends, file read failures, duplicate rows, deletion/truncation/recreation/replacement, cost coverage, time boundaries/DST, project/model identity, tags, skill attribution/session counts, window visibility, production watcher rearming, and a 100,000-record synthetic aggregation. Exhaustive `TestStore` tests also cover filter actions, hidden/preview no-I/O behavior, open/close/reopen, cached versus full reads, minute ticks, debounce timing, stream teardown, in-flight cancellation, stale responses, failure/retry, and injected Quit behavior.
+Tests cover both schemas (including the shared TypeScript/Swift additive-v1 usage fixture), malformed/unknown records, fractional timestamps, partial appends, file read failures, duplicate rows, deletion/truncation/recreation/replacement, cost coverage, time boundaries/DST, project/model identity, tags, skill attribution/session counts, window visibility, production watcher rearming, and a 100,000-record synthetic aggregation. Exhaustive `TestStore` tests also cover filter actions, hidden/preview no-I/O behavior, open/close/reopen, cached versus full reads, minute ticks, debounce timing, stream teardown, in-flight cancellation, stale responses, failure/retry, and injected Quit behavior.
 
 For manual verification:
 

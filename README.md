@@ -41,7 +41,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 
 ### Usage and skill tracking
 
-- `extensions/usage/index.ts` records assistant-response token usage and estimated cost in a private JSONL ledger.
+- `extensions/usage/index.ts` records new assistant, tool/nested-model, compaction, branch-summary, and separate usage-entry costs in the existing private JSONL v1 ledger. Optional source-kind metadata is backward-compatible with the macOS reader; resumed/forked history is not backfilled.
 - `/usage` reports by range, project, branch, model, provider, and skill usage, with JSON and visual report options.
 - `/usage openai` fetches the current OpenAI Codex subscription windows on demand without a persistent widget or background polling.
 - `extensions/skills/read-ledger.ts` tracks explicit skill command usage and skill-file reads without storing prompts or skill contents.
@@ -82,7 +82,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 
 ### UI helpers
 
-- `extensions/ui/dracula-status-line.ts` adds the Dracula/minimal status line with branch, model, token, cost, context, and extension status details. A `~` context percentage is a retained estimate used while Codex tool-use usage metadata is incomplete; after compaction it shows `--%` until Pi reports reliable post-compaction usage.
+- `extensions/ui/dracula-status-line.ts` adds the Dracula/minimal status line with branch, model, token, cost, context, and extension status details. Token/spend totals cover the full session across branches and usage sources; `Σ` includes cache tokens, while the context bar still reflects active context. A `~` context percentage is a retained estimate used while Codex tool-use usage metadata is incomplete; after compaction it shows `--%` until Pi reports reliable post-compaction usage.
 - `/statusline` cycles status line modes; `/statusline-colors` toggles context color examples. `/statusline debug` toggles an in-memory trace of Pi context-usage readings and shows the samples when disabled.
 - `extensions/ui/response-time.ts` tracks response timing; `/response-time` toggles reporting.
 - `extensions/ui/interactive-agent-questions.ts` exposes the `ask_user` tool for guided TUI questions.

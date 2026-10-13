@@ -1,6 +1,6 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { totalSessionUsage } from "../../src/shared/usage-accounting.ts";
 import {
     AUTOCOMPACT_STATUS_EVENT, AUTOCOMPACT_STATUS_REQUEST, AUTOCOMPACT_SYMBOL,
     autoCompactIndicatorColor, isAutoCompactStatus, type AutoCompactStatus,
@@ -108,18 +108,9 @@ export default function (pi: ExtensionAPI) {
                 },
                 invalidate() {},
                 render(width: number): string[] {
-                    let input = 0;
-                    let output = 0;
-                    let cost = 0;
-
-                    for (const entry of ctx.sessionManager.getBranch()) {
-                        if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-
-                        const message = entry.message as AssistantMessage;
-                        input += message.usage?.input ?? 0;
-                        output += message.usage?.output ?? 0;
-                        cost += message.usage?.cost?.total ?? 0;
-                    }
+                    // Billing includes abandoned branches and summary/tool usage, not just active context.
+                    const totals = totalSessionUsage(ctx.sessionManager.getEntries());
+                    const { input, output, totalCost: cost } = totals;
 
                     const branch = footerData.getGitBranch();
                     const statuses = [...footerData.getExtensionStatuses().values()].filter(Boolean);
@@ -130,7 +121,7 @@ export default function (pi: ExtensionAPI) {
                         : undefined;
                     const inputText = formatCount(input);
                     const outputText = formatCount(output);
-                    const totalText = formatCount(input + output);
+                    const totalText = formatCount(totals.totalTokens);
                     const costText = formatCurrency(cost);
                     const liveContextUsage = ctx.getContextUsage();
                     const contextUsage = getContextUsageDisplay(contextUsageDisplay, {

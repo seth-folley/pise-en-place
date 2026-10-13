@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { createEventBus, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
@@ -24,8 +25,10 @@ async function harness(providerFirst = false) {
     const theme = { fg: (color: string, text: string) => `\x1b[${colors[color] ?? 37}m${text}\x1b[0m`, bold: (text: string) => text };
     let footer: { render(width: number): string[]; dispose(): void } | undefined;
     let tokens: number | null = 100_000;
+    const entries: unknown[] = [];
+    let branch: unknown[] = [];
     const ctx = {
-        sessionManager: { getSessionId: () => "one", getBranch: () => [] },
+        sessionManager: { getSessionId: () => "one", getBranch: () => branch, getEntries: () => entries },
         model: { id: "test", contextWindow: 1_000_000 },
         getContextUsage: () => ({ tokens, percent: tokens === null ? null : tokens / 10_000, contextWindow: 1_000_000 }),
         ui: {
@@ -43,7 +46,9 @@ async function harness(providerFirst = false) {
     statusLine(api as unknown as ExtensionAPI);
     await handlers.get("session_start")!({}, ctx);
     return {
-        events, status, requestRender, unsubscribeBranch,
+        events, status, requestRender, unsubscribeBranch, entries,
+        branch: (values: unknown[]) => { branch = values; },
+        assistantComplete: () => handlers.get("message_end")!({ message: { role: "assistant", stopReason: "stop", usage: { cacheRead: 20 } } }, ctx),
         render: (width = 120) => footer!.render(width),
         usage: (value: number | null) => { tokens = value; },
         cycle: () => commands.get("statusline").handler("", ctx),
@@ -79,6 +84,22 @@ describe("Dracula footer autocompact symbol", () => {
         expect(h.render()[1]).toContain("\x1b[32m≡\x1b[0m");
         h.events.emit(AUTOCOMPACT_STATUS_EVENT, { ...h.status, enabled: false });
         expect(h.render()[1]).toContain("\x1b[90m≡\x1b[0m");
+    });
+
+    it("shows full-session usage including caches, tools and summaries independent of the active branch", async () => {
+        const h = await harness();
+        const usage = { input: 10, output: 5, cacheRead: 20, cacheWrite: 15, cost: { total: 0.1 } };
+        h.entries.push(...["message", "message", "compaction", "branch_summary", "usage"].map((type, index) => ({
+            id: `entry-${index}`, type, timestamp: "2026-10-13T12:00:00Z", usage,
+            message: { role: index === 0 ? "assistant" : "toolResult", usage },
+        })));
+        const line = () => stripVTControlCharacters(h.render()[1]);
+        expect(line()).toContain("↑ 50"); expect(line()).toContain("↓ 25");
+        expect(line()).toContain("Σ 250"); expect(line()).toContain("$0.50");
+        h.branch([h.entries[4]]);
+        expect(line()).toContain("Σ 250");
+        h.usage(350_000); await h.assistantComplete(); expect(line()).toContain("35%");
+        await h.cycle(); expect(line()).toContain("Σ 250"); expect(line()).toContain("$0.50");
     });
 
     it("cleans up event subscriptions when the footer is replaced or turned off", async () => {

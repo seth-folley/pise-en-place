@@ -28,7 +28,7 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 
-async function run(stopReason: AssistantMessage["stopReason"], options: { omitSettlement?: boolean; settlementAborted?: boolean; priorToolResponse?: boolean; timeout?: boolean; cancelBeforePrompt?: boolean } = {}) {
+async function run(stopReason: AssistantMessage["stopReason"], options: { omitSettlement?: boolean; settlementAborted?: boolean; priorToolResponse?: boolean; timeout?: boolean; cancelBeforePrompt?: boolean; usageEvidence?: boolean } = {}) {
     const project = path.join(root, "project"), agentDir = path.join(root, "agent");
     await mkdir(project); await mkdir(agentDir);
     await writeFile(path.join(project, "value.txt"), "baseline\n");
@@ -50,7 +50,7 @@ variants:
     prompt: This must not start after an unsuccessful first variant.
 `);
     const actual = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>("@earendil-works/pi-coding-agent");
-    let calls = 0;
+    let calls = 0, shutdowns = 0;
     vi.mocked(createAgentSession).mockImplementation(async config => {
         const created = await actual.createAgentSession(config);
         created.session.agent.streamFunction = (model, _context, providerOptions) => {
@@ -76,6 +76,28 @@ variants:
             else finish();
             return stream;
         };
+        const emit = created.session.extensionRunner!.emit.bind(created.session.extensionRunner!);
+        vi.spyOn(created.session.extensionRunner!, "emit").mockImplementation(async event => {
+            if (event.type === "session_shutdown") {
+                shutdowns++;
+                if (options.usageEvidence) created.session.sessionManager.appendUsage("shutdown-flush", "other-provider", "other-model", {
+                    input: 10, output: 20, cacheRead: 30, cacheWrite: 40, totalTokens: 100,
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 },
+                });
+            }
+            return emit(event);
+        });
+        if (options.usageEvidence) created.session.subscribe(event => {
+            if (event.type !== "agent_settled") return;
+            const manager = created.session.sessionManager;
+            const billed = { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, totalTokens: 100,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 } };
+            manager.appendMessage({ role: "toolResult", toolCallId: "nested-model", toolName: "classify", isError: true,
+                content: [{ type: "text", text: "Partial tool evidence" }], timestamp: Date.now(), usage: billed });
+            manager.appendCompaction("Synthetic summary", manager.getLeafId(), 1000, undefined, true, billed);
+            manager.branchWithSummary(null, "Synthetic abandoned-branch summary", undefined, true, billed);
+            manager.appendUsage("future-operation", "other-provider", "other-model", billed);
+        });
         if (options.omitSettlement || options.settlementAborted) {
             const subscribe = created.session.subscribe.bind(created.session);
             vi.spyOn(created.session, "subscribe").mockImplementation(listener => subscribe(event => {
@@ -91,7 +113,7 @@ variants:
         signal: controller.signal,
         onEvent(event) { if (options.cancelBeforePrompt && event.kind === "variant_started") controller.abort(); },
     });
-    return { result, calls };
+    return { result, calls, shutdowns };
 }
 
 describe("skill-eval completion evidence", () => {
@@ -149,6 +171,17 @@ describe("skill-eval completion evidence", () => {
         expect(result.status).toBe("cancelled");
         expect(calls).toBe(0);
         expect(result.storage.record.variants[1].status).toBe("pending");
+    }, 15_000);
+
+    it("includes all raw usage and tool failures even after context changes", async () => {
+        const { result, shutdowns } = await run("stop", { usageEvidence: true });
+        expect(result.status).toBe("completed");
+        expect(shutdowns).toBe(2);
+        const first = result.storage.record.variants[0];
+        expect(first.metrics).toMatchObject({ inputTokens: 50, outputTokens: 100, cacheReadTokens: 150,
+            cacheWriteTokens: 200, cost: 1.25, toolFailures: 1 });
+        const metrics = JSON.parse(await readFile(path.join(result.storage.variantDir("first"), "metrics.json"), "utf8"));
+        expect(metrics).toEqual(first.metrics);
     }, 15_000);
 
     it("allows later variants after confirmed normal completion", async () => {

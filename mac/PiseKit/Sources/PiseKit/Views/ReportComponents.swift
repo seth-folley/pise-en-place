@@ -13,7 +13,7 @@ extension UsageMetric {
     func accessibleValue(_ totals: UsageTotals) -> String {
         if self == .cost {
             guard let amount = totals.estimatedCost else { return "Cost unavailable" }
-            let coverage = totals.costedCalls < totals.calls ? ", partial: estimates for \(totals.costedCalls) of \(totals.calls) responses" : ""
+            let coverage = totals.costedCalls < totals.calls ? ", partial: estimates for \(totals.costedCalls) of \(totals.calls) usage records" : ""
             return Self.money(amount) + coverage
         }
         return formatted(totals)
@@ -91,7 +91,7 @@ struct UsageRanking: View {
             ProgressView(value: maximum > 0 ? metric.value(row.totals) / maximum : 0)
                 .accessibilityHidden(true)
             if metric == .cost && row.totals.costedCalls < row.totals.calls {
-                Text("Estimates for \(row.totals.costedCalls)/\(row.totals.calls) responses")
+                Text("Estimates for \(row.totals.costedCalls)/\(row.totals.calls) usage records")
                     .font(.caption2).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
