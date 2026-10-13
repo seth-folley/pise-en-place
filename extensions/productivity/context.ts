@@ -129,7 +129,7 @@ function toPosixPath(value: string): string {
 }
 
 function escapeRegExp(value: string): string {
-	return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+	return value.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
 }
 
 function globToRegExp(pattern: string): RegExp {
@@ -205,8 +205,9 @@ function shouldIgnoreContextFile(file: Pick<ContextFile, "path">, cwd: string, s
 function removeContextBlocks(systemPrompt: string, ignored: ContextFile[]): string {
 	let nextPrompt = systemPrompt;
 	for (const file of ignored) {
-		const block = `<project_instructions path="${file.path}">\n${file.content}\n</project_instructions>\n\n`;
-		nextPrompt = nextPrompt.split(block).join("");
+		const block = `<project_instructions path="${file.path}">\n${file.content}\n</project_instructions>`;
+		// Pi's final block has only one trailing newline; separators are not part of its identity.
+		nextPrompt = nextPrompt.replace(new RegExp(`${escapeRegExp(block)}(?:\\r?\\n){0,2}`, "g"), "");
 	}
 
 	return nextPrompt.replace(

@@ -33,7 +33,9 @@ Run `/context` to see the private guidance status. It shows one of:
 - **Inactive:** no `additional_guidance` configured for this project
 - **Error:** a validation or file-read error message
 
-Private guidance is re-evaluated on every agent turn, so edits to `projects.json` or the guidance file take effect on the next agent turn.
+Private guidance is re-evaluated at the start of each new agent run, including automatic team wakeups on Pi 1.2. Edits to `projects.json` or the guidance file take effect on the next run. Tool follow-ups within an already-started run keep that run's injected guidance.
+
+Automatic-wakeup integration is covered with synthetic projects and the real context extension in `tests/coordination/automation-sdk.test.ts`. Assertions inspect provider-boundary requests, prove per-project isolation and no duplicated guidance, and check that coordination does not automatically copy guidance into broker messages. This is not a guarantee that a model will never explicitly reproduce private instructions.
 
 ## Errors
 
