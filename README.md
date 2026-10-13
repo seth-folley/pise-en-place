@@ -121,7 +121,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 - `extensions/productivity/context.ts` adds `/context` status and `/context project config` for project-specific context-file and skill filtering, plus private project guidance injection.
 - See `docs/private-guidance.md` for configuring per-project `additional_guidance` files.
 - `extensions/productivity/todos.ts` adds `/todos`, the `todo` tool, and a session-scoped todo widget.
-- `extensions/productivity/local-share.ts` adds `/share-local` for local HTML transcript export.
+- `extensions/productivity/local-share.ts` adds `/share-local` for local HTML transcript export through supported `pi --export` (requires `pi` on `PATH`). Existing destinations and clickable links are preserved; export styling and initial branch selection follow the CLI rather than live UI state.
 - `extensions/productivity/markdown-output.ts` adds `/md <path>` for rendering markdown file contents.
 - `extensions/productivity/copy-session-id.ts` adds `alt+s` to copy the current session ID.
 - `extensions/productivity/cut-input.ts` adds `ctrl+shift+x` to cut the current input and `alt+/` to copy it (when present) and begin a slash command.
@@ -129,7 +129,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 
 ### Theme
 
-- `themes/dracula-pro.json` registers the local Dracula Pro theme resources.
+- `themes/dracula-pro.json` registers the local Dracula Pro theme resources and references Pi's published theme schema. The palette is unchanged.
 
 ## Structure
 

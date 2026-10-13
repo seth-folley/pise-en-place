@@ -346,9 +346,11 @@ The suffix must contain lowercase letters and numbers joined by single hyphens, 
 /share-local [output-path]
 ```
 
-Waits for the agent to become idle, exports the complete file-backed session to HTML, and prints an openable local link. A relative path is resolved from the current working directory; `.html` is added when omitted. Without a path, output goes under `~/.pi/agent/sessions/transcripts/` (or the configured Pi agent directory). In-memory sessions cannot be exported.
+Waits for the agent to become idle, exports the complete persisted session tree through supported `pi --export`, and prints an openable local link. Requires the `pi` executable on `PATH`; it uses that CLI's version rather than resolving a repository-local private exporter. A relative path is resolved from the current working directory; `.html` is added when omitted. Without a path, output goes under `~/.pi/agent/sessions/transcripts/` (or the configured Pi agent directory). In-memory sessions cannot be exported.
 
-The generated HTML contains conversation content and should be treated as private unless deliberately shared.
+Export is local-only and does not start a model conversation or upload the transcript. Discovered extensions, skills, templates, themes, and context files are disabled for the child. Styling follows Pi's CLI export defaults, not the live terminal theme. The initially displayed branch is selected from the persisted file, which can differ from the current in-memory selection after `/tree` navigation; all persisted branches remain included.
+
+A success link is shown only after a zero, non-killed exit and a non-empty output file. Failures show diagnostics without dumping stdout or rerunning the export. The generated HTML contains conversation content and should be treated as private unless deliberately shared.
 
 ### `/md`
 

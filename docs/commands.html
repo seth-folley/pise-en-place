@@ -355,8 +355,9 @@
 <h3 id="share-local"><code>/share-local</code><a class="anchor" href="#share-local" aria-label="Link to this section">#</a></h3>
 <pre><code class="language-text">/share-local [output-path]
 </code></pre>
-<p>Waits for the agent to become idle, exports the complete file-backed session to HTML, and prints an openable local link. A relative path is resolved from the current working directory; <code>.html</code> is added when omitted. Without a path, output goes under <code>~/.pi/agent/sessions/transcripts/</code> (or the configured Pi agent directory). In-memory sessions cannot be exported.</p>
-<p>The generated HTML contains conversation content and should be treated as private unless deliberately shared.</p>
+<p>Waits for the agent to become idle, exports the complete persisted session tree through supported <code>pi --export</code>, and prints an openable local link. Requires the <code>pi</code> executable on <code>PATH</code>; it uses that CLI&#39;s version rather than resolving a repository-local private exporter. A relative path is resolved from the current working directory; <code>.html</code> is added when omitted. Without a path, output goes under <code>~/.pi/agent/sessions/transcripts/</code> (or the configured Pi agent directory). In-memory sessions cannot be exported.</p>
+<p>Export is local-only and does not start a model conversation or upload the transcript. Discovered extensions, skills, templates, themes, and context files are disabled for the child. Styling follows Pi&#39;s CLI export defaults, not the live terminal theme. The initially displayed branch is selected from the persisted file, which can differ from the current in-memory selection after <code>/tree</code> navigation; all persisted branches remain included.</p>
+<p>A success link is shown only after a zero, non-killed exit and a non-empty output file. Failures show diagnostics without dumping stdout or rerunning the export. The generated HTML contains conversation content and should be treated as private unless deliberately shared.</p>
 <h3 id="md"><code>/md</code><a class="anchor" href="#md" aria-label="Link to this section">#</a></h3>
 <pre><code class="language-text">/md &lt;path-to-markdown-file&gt;
 </code></pre>

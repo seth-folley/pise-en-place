@@ -1,37 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { realpathSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
+import { stripVTControlCharacters } from "node:util";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-
-type ExportSessionToHtml = (
-    sessionManager: unknown,
-    state?: unknown,
-    options?: { outputPath?: string; themeName?: string }
-) => Promise<string>;
-
-const require = createRequire(import.meta.url);
-
-function getPackageDistDir(): string {
-    try {
-        return dirname(require.resolve("@earendil-works/pi-coding-agent"));
-    } catch {
-        // Project-local extensions may not have pi in local node_modules. In normal pi runs, argv[1] points at
-        // pi's CLI entrypoint, so resolve that symlink and use its dist directory instead.
-        return dirname(realpathSync(process.argv[1]));
-    }
-}
-
-async function loadExportSessionToHtml(): Promise<ExportSessionToHtml> {
-    const exportModulePath = join(getPackageDistDir(), "core", "export-html", "index.js");
-    const exportModule = await import(pathToFileURL(exportModulePath).href) as {
-        exportSessionToHtml: ExportSessionToHtml;
-    };
-
-    return exportModule.exportSessionToHtml;
-}
 
 function sanitizeFilePart(value: string): string {
     return value
@@ -77,14 +49,27 @@ export default function (pi: ExtensionAPI) {
                 return;
             }
 
-            const outputPath = getOutputPath(ctx.cwd, ctx.sessionManager.getSessionId(), args);
+            const absolutePath = resolve(getOutputPath(ctx.cwd, ctx.sessionManager.getSessionId(), args));
 
             try {
-                await mkdir(dirname(outputPath), { recursive: true });
+                await mkdir(dirname(absolutePath), { recursive: true });
 
-                const exportSessionToHtml = await loadExportSessionToHtml();
-                const filePath = await exportSessionToHtml(ctx.sessionManager, undefined, { outputPath });
-                const absolutePath = resolve(filePath);
+                // Use the CLI contract, not a private module from whichever npm copy resolves here.
+                // Export exits before agent/resource startup; disable discovery defensively as well.
+                const result = await pi.exec("pi", [
+                    "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+                    "--export", resolve(sessionFile), absolutePath,
+                ], { cwd: ctx.cwd });
+                if (result.killed || result.code !== 0) {
+                    const reason = result.killed ? "Pi export process was terminated." : `Pi export exited with code ${result.code}.`;
+                    const diagnostic = stripVTControlCharacters(result.stderr).trim();
+                    const guidance = !diagnostic && !result.killed ? "Ensure the pi executable is available on PATH." : undefined;
+                    throw new Error([reason, diagnostic, guidance].filter(Boolean).join("\n"));
+                }
+                const output = await stat(absolutePath);
+                if (!output.isFile() || output.size === 0) {
+                    throw new Error("Pi export did not produce a non-empty HTML file.");
+                }
                 const fileURL = pathToFileURL(absolutePath).href;
                 const link = terminalHyperlink(basename(absolutePath), fileURL);
 
