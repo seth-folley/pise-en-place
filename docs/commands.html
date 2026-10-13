@@ -168,7 +168,7 @@
 </ol>
 <p>Skill path inputs must be absolute; a directory must contain a readable <code>SKILL.md</code>. Launching reviews requires interactive Pi running in Supacode, a Git worktree, and available <code>supacode</code>, <code>pi</code>, <code>codex</code>, and <code>claude</code> executables. The <code>--show-prompt</code> preview only requires interactive Pi and the Git worktree used to resolve the skill.</p>
 <h3 id="usage"><code>/usage</code><a class="anchor" href="#usage" aria-label="Link to this section">#</a></h3>
-<p>Tracks finalized assistant-response metadata in <code>~/.pi/agent/usage/ledger.jsonl</code> and reports it without storing prompt or response content.</p>
+<p>Tracks new assistant, tool/nested-model, compaction, branch-summary, and separate usage-entry metadata in the existing <code>~/.pi/agent/usage/ledger.jsonl</code>. JSONL remains version 1 with optional source-kind fields; counts mean usage records, not exact provider requests. Prompt, response, tool-result, and summary contents are not stored.</p>
 <h4 id="summaries">Summaries<a class="anchor" href="#summaries" aria-label="Link to this section">#</a></h4>
 <pre><code class="language-text">/usage
 /usage today
@@ -191,7 +191,7 @@
 /usage report [range] --visual
 /usage report [range] --json
 </code></pre>
-<p>Reports group usage by provider, model, and project and show the most expensive recorded responses. <code>--visual</code> produces terminal-friendly horizontal graphs and cannot be combined with <code>--json</code>.</p>
+<p>Reports group usage by provider, model, and project and show the most expensive usage records. <code>--visual</code> produces terminal-friendly horizontal graphs and cannot be combined with <code>--json</code>.</p>
 <h4 id="projects-and-models">Projects and models<a class="anchor" href="#projects-and-models" aria-label="Link to this section">#</a></h4>
 <pre><code class="language-text">/usage project
 /usage project --list
@@ -307,7 +307,7 @@
 <li>Busy work is not interrupted. Aborting an automatic run pauses local automation.</li>
 <li>Automation is bounded to 100 activations per room in a rolling hour, with no lifetime thread cap.</li>
 </ul>
-<p>Membership entries and inspection/delivery evidence are durable, and the broker retains room history and receipts. Automatic membership restoration currently occurs only during <code>/reload</code>; ordinary new/resume/fork startup does not auto-enroll, so explicitly rejoin when needed. The private broker database, socket, and credentials live under the Pi user directory. Human control operations require interactive TUI confirmation. Coordination requires Node 24.15+, Pi 0.85.1+, and macOS or Linux. See <a href="agent-coordination.md">agent coordination</a> and the <a href="agent-coordination-protocol.md">coordination protocol</a>.</p>
+<p>Membership entries and inspection/delivery evidence are durable, and the broker retains room history and receipts. Automatic membership restoration currently occurs only during <code>/reload</code>; ordinary new/resume/fork startup does not auto-enroll, so explicitly rejoin when needed. The private broker database, socket, and credentials live under the Pi user directory. Human control operations require interactive TUI confirmation. Coordination requires Node 24.15+, Pi 0.87.1+ (the package peer minimum), and macOS or Linux. See <a href="agent-coordination.md">agent coordination</a> and the <a href="agent-coordination-protocol.md">coordination protocol</a>.</p>
 <h2 id="session-and-project-productivity">Session and project productivity<a class="anchor" href="#session-and-project-productivity" aria-label="Link to this section">#</a></h2>
 <h3 id="todos"><code>/todos</code><a class="anchor" href="#todos" aria-label="Link to this section">#</a></h3>
 <pre><code class="language-text">/todos
@@ -365,7 +365,9 @@
 <pre><code class="language-text">/roadmap &lt;change request&gt;
 /roadmap --help
 </code></pre>
-<p>Requires <code>ROADMAP.md</code> in the current working directory. It launches an isolated non-interactive Pi process with only <code>read</code>, <code>edit</code>, and <code>write</code>, instructing it to update the roadmap and normally no other file. The child has no session, context files, skills, templates, themes, or other extensions except usage tracking. The command can modify <code>ROADMAP.md</code> and has a ten-minute timeout.</p>
+<p>Requires readable <code>ROADMAP.md</code> in the current working directory. It launches an isolated non-interactive Pi process with only <code>read</code>, <code>edit</code>, and <code>write</code>, instructing it to update the roadmap and normally no other file. The child has no persisted session, context files, skills, templates, themes, or other extensions except usage tracking. The command can modify <code>ROADMAP.md</code> and has a ten-minute timeout.</p>
+<p>The command reads structured completion events and compares the target&#39;s bytes before and after the run, including already-dirty files and non-Git directories. Only a zero exit plus valid settlement and a final normal <code>stop</code> confirms child completion. Confirmed runs with no content change are reported as no-ops rather than updates. A changed file with truncated, failed, aborted, missing, or malformed completion evidence produces a <strong>warning</strong> to review it before rerunning. Unreadable/deleted results are reported as unverified; unsuccessful runs with unchanged target bytes remain errors. Available response text and safe diagnostics are shown without dumping raw tool/context JSON.</p>
+<p>The command never launches a second child or rolls back changes automatically; Pi&#39;s normal internal provider-retry behavior is unchanged. Snapshots and event output stay in memory, with no new retained transcripts or artifact paths. Byte changes do not validate the requested meaning or identify which process made concurrent edits; only <code>ROADMAP.md</code> is compared, so inspect any other explicitly requested files yourself.</p>
 <h2 id="ui-commands">UI commands<a class="anchor" href="#ui-commands" aria-label="Link to this section">#</a></h2>
 <h3 id="statusline"><code>/statusline</code><a class="anchor" href="#statusline" aria-label="Link to this section">#</a></h3>
 <pre><code class="language-text">/statusline

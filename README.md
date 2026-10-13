@@ -125,7 +125,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 - `extensions/productivity/markdown-output.ts` adds `/md <path>` for rendering markdown file contents.
 - `extensions/productivity/copy-session-id.ts` adds `alt+s` to copy the current session ID.
 - `extensions/productivity/cut-input.ts` adds `ctrl+shift+x` to cut the current input and `alt+/` to copy it (when present) and begin a slash command.
-- `extensions/productivity/roadmap-writer.ts` adds `/roadmap <request>` to update `ROADMAP.md` through an isolated Pi process.
+- `extensions/productivity/roadmap-writer.ts` adds `/roadmap <request>` to update `ROADMAP.md` through an isolated Pi process. It checks structured completion and before/after file bytes; changed-but-unconfirmed work gets a review warning, never an automatic task rerun or rollback.
 
 ### Theme
 

@@ -88,7 +88,7 @@ Skill path inputs must be absolute; a directory must contain a readable `SKILL.m
 
 ### `/usage`
 
-Tracks finalized assistant-response metadata in `~/.pi/agent/usage/ledger.jsonl` and reports it without storing prompt or response content.
+Tracks new assistant, tool/nested-model, compaction, branch-summary, and separate usage-entry metadata in the existing `~/.pi/agent/usage/ledger.jsonl`. JSONL remains version 1 with optional source-kind fields; counts mean usage records, not exact provider requests. Prompt, response, tool-result, and summary contents are not stored.
 
 #### Summaries
 
@@ -122,7 +122,7 @@ A bare `--branch` resolves the current workspace's project and Git branch. An ex
 /usage report [range] --json
 ```
 
-Reports group usage by provider, model, and project and show the most expensive recorded responses. `--visual` produces terminal-friendly horizontal graphs and cannot be combined with `--json`.
+Reports group usage by provider, model, and project and show the most expensive usage records. `--visual` produces terminal-friendly horizontal graphs and cannot be combined with `--json`.
 
 #### Projects and models
 
@@ -278,7 +278,7 @@ Lists child sessions retained by the package's `subagent` tool for the current p
 - Busy work is not interrupted. Aborting an automatic run pauses local automation.
 - Automation is bounded to 100 activations per room in a rolling hour, with no lifetime thread cap.
 
-Membership entries and inspection/delivery evidence are durable, and the broker retains room history and receipts. Automatic membership restoration currently occurs only during `/reload`; ordinary new/resume/fork startup does not auto-enroll, so explicitly rejoin when needed. The private broker database, socket, and credentials live under the Pi user directory. Human control operations require interactive TUI confirmation. Coordination requires Node 24.15+, Pi 0.85.1+, and macOS or Linux. See [agent coordination](agent-coordination.md) and the [coordination protocol](agent-coordination-protocol.md).
+Membership entries and inspection/delivery evidence are durable, and the broker retains room history and receipts. Automatic membership restoration currently occurs only during `/reload`; ordinary new/resume/fork startup does not auto-enroll, so explicitly rejoin when needed. The private broker database, socket, and credentials live under the Pi user directory. Human control operations require interactive TUI confirmation. Coordination requires Node 24.15+, Pi 0.87.1+ (the package peer minimum), and macOS or Linux. See [agent coordination](agent-coordination.md) and the [coordination protocol](agent-coordination-protocol.md).
 
 ## Session and project productivity
 
@@ -365,7 +365,11 @@ Reads and renders a `.md` or `.markdown` file as a custom conversation message. 
 /roadmap --help
 ```
 
-Requires `ROADMAP.md` in the current working directory. It launches an isolated non-interactive Pi process with only `read`, `edit`, and `write`, instructing it to update the roadmap and normally no other file. The child has no session, context files, skills, templates, themes, or other extensions except usage tracking. The command can modify `ROADMAP.md` and has a ten-minute timeout.
+Requires readable `ROADMAP.md` in the current working directory. It launches an isolated non-interactive Pi process with only `read`, `edit`, and `write`, instructing it to update the roadmap and normally no other file. The child has no persisted session, context files, skills, templates, themes, or other extensions except usage tracking. The command can modify `ROADMAP.md` and has a ten-minute timeout.
+
+The command reads structured completion events and compares the target's bytes before and after the run, including already-dirty files and non-Git directories. Only a zero exit plus valid settlement and a final normal `stop` confirms child completion. Confirmed runs with no content change are reported as no-ops rather than updates. A changed file with truncated, failed, aborted, missing, or malformed completion evidence produces a **warning** to review it before rerunning. Unreadable/deleted results are reported as unverified; unsuccessful runs with unchanged target bytes remain errors. Available response text and safe diagnostics are shown without dumping raw tool/context JSON.
+
+The command never launches a second child or rolls back changes automatically; Pi's normal internal provider-retry behavior is unchanged. Snapshots and event output stay in memory, with no new retained transcripts or artifact paths. Byte changes do not validate the requested meaning or identify which process made concurrent edits; only `ROADMAP.md` is compared, so inspect any other explicitly requested files yourself.
 
 ## UI commands
 
