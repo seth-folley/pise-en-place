@@ -40,18 +40,44 @@ it("integrates with the real SDK command lifecycle, provider registry and native
             usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
         } })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
     }));
-    await session.prompt("/fast on");
-    expect(statuses.at(-1).enabled).toBe(true);
+    const runner = session.extensionRunner!;
+    const shortcut = runner.getShortcuts({}).get("alt+shift+f")!;
+    expect(shortcut).toBeDefined();
+    const entriesBeforeToggle = manager.getEntries().length;
+    await shortcut.handler(runner.createContext());
+    await vi.waitFor(() => expect(statuses.at(-1).enabled).toBe(true));
+    expect(bodies).toHaveLength(0);
+    expect(manager.getEntries()).toHaveLength(entriesBeforeToggle);
     expect(runtime.getAllModels().map(model => `${model.provider}/${model.id}`).sort()).toEqual(catalog);
     expect(runtime.getProvider("openai")!.auth).toBe(auth);
     expect(runtime.getProvider("openai")!.classify).toBe(classifier);
     await session.prompt("Offline request.");
     expect(bodies).toHaveLength(1);
     expect(bodies[0].service_tier).toBe("priority");
-    await session.prompt("/fast off");
+    await shortcut.handler(runner.createContext());
+    await vi.waitFor(() => expect(statuses.at(-1).enabled).toBe(false));
     await session.prompt("Ordinary offline request.");
     expect(bodies).toHaveLength(2);
     expect(bodies[1].service_tier).toBeUndefined();
+
+    // A disabled wrapper is still registered until shutdown. Reload must remove
+    // it, reset activation, and allow the fresh runtime to enable fast again.
+    expect(runtime.getRegisteredNativeProvider("openai")).toBeDefined();
+    await session.reload();
+    expect(statuses.at(-1).enabled).toBe(false);
+    expect(runtime.getRegisteredNativeProvider("openai")).toBeUndefined();
+    await session.prompt("/fast on");
+    expect(statuses.at(-1).enabled).toBe(true);
+    await session.prompt("Priority after reload.");
+    expect(bodies).toHaveLength(3);
+    expect(bodies[2].service_tier).toBe("priority");
+
+    // Also cover shutdown while the wrapper is enabled, and repeated reloads.
+    await session.reload();
+    expect(statuses.at(-1).enabled).toBe(false);
+    expect(runtime.getRegisteredNativeProvider("openai")).toBeUndefined();
+    await session.prompt("/fast on");
+    expect(statuses.at(-1).enabled).toBe(true);
     expect(errors).toEqual([]);
     expect(manager.getEntries().some(entry => entry.type === "custom" && entry.customType.includes("fast"))).toBe(false);
 }, 15_000);

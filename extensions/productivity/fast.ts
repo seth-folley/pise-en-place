@@ -45,7 +45,15 @@ export default function fast(pi: ExtensionAPI): void {
         if (sessionId === current?.sessionManager.getSessionId()) publish();
     });
     pi.on("session_start", (_event, ctx) => reset(ctx));
-    pi.on("session_shutdown", () => reset());
+    pi.on("session_shutdown", (_event, ctx) => {
+        reset();
+        // Pi retains native provider registrations across /reload. Remove only
+        // wrappers we still own so the next runtime can activate fast mode.
+        for (const [id, provider] of wrapped) {
+            if (ctx.modelRegistry.getRegisteredNativeProvider(id) === provider) pi.unregisterProvider(id);
+        }
+        wrapped.clear();
+    });
     pi.on("session_tree", (_event, ctx) => reset(ctx));
     pi.on("model_select", (_event, ctx) => {
         if (key(ctx.model) !== selection) reset(ctx);
@@ -101,6 +109,14 @@ export default function fast(pi: ExtensionAPI): void {
         pi.registerProvider(replacement);
         wrapped.set(id, replacement);
     }
+
+    pi.registerShortcut("alt+shift+f", {
+        description: "Toggle OpenAI fast mode (additional cost/usage)",
+        handler: () => {
+            // Dispatch the command rather than duplicating its idle wait and safety checks.
+            pi.sendUserMessage("/fast", { expandPromptTemplates: true });
+        },
+    });
 
     pi.registerCommand("fast", {
         description: "Toggle OpenAI priority service for this session: [on|off|status] (additional cost/usage)",

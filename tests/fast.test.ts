@@ -18,6 +18,8 @@ const codexModel = {
 function harness(source?: Provider) {
     const handlers = new Map<string, any>();
     const commands = new Map<string, any>();
+    const shortcuts = new Map<string, any>();
+    const sendUserMessage = vi.fn();
     const events = createEventBus();
     const statuses: any[] = [];
     events.on(FAST_STATUS_EVENT, status => statuses.push(status));
@@ -26,7 +28,12 @@ function harness(source?: Provider) {
     const providers = new Map<string, any>([["openai-codex", source ?? {
         id: "openai-codex", auth: { oauth: {} }, getModels: () => [codexModel], stream: nativeStream, streamSimple: simpleStream,
     }]]);
+    const originals = new Map(providers);
     const registrations = new Map<string, Provider>();
+    const unregisterProvider = vi.fn((id: string) => {
+        registrations.delete(id);
+        providers.set(id, originals.get(id));
+    });
     const registerProvider = vi.fn((provider: Provider) => {
         registrations.set(provider.id, provider); providers.set(provider.id, provider);
     });
@@ -42,10 +49,11 @@ function harness(source?: Provider) {
         waitForIdle: vi.fn(async () => {}),
     };
     fast({ events, on: (name: string, handler: any) => handlers.set(name, handler),
-        registerCommand: (name: string, command: any) => commands.set(name, command), registerProvider } as any);
+        registerCommand: (name: string, command: any) => commands.set(name, command),
+        registerShortcut: (key: string, shortcut: any) => shortcuts.set(key, shortcut), sendUserMessage, registerProvider, unregisterProvider } as any);
     handlers.get("session_start")({}, ctx);
     return {
-        ctx, handlers, commands, statuses, events, providers, registrations, registerProvider, nativeStream, simpleStream,
+        ctx, handlers, commands, shortcuts, sendUserMessage, statuses, events, providers, registrations, registerProvider, unregisterProvider, nativeStream, simpleStream,
         command: (args = "") => commands.get("fast").handler(args, ctx),
         request: (options: any = {}) => providers.get(ctx.model.provider).streamSimple(ctx.model, { messages: [] }, {
             sessionId: "one", apiKey: "key", reasoning: "medium", ...options,
@@ -54,6 +62,13 @@ function harness(source?: Provider) {
 }
 
 describe("OpenAI fast mode", () => {
+    it("routes Alt+Shift+F through the existing toggle command", () => {
+        const h = harness();
+        h.shortcuts.get("alt+shift+f").handler(h.ctx);
+        expect(h.sendUserMessage).toHaveBeenCalledExactlyOnceWith("/fast", { expandPromptTemplates: true });
+        expect(h.registerProvider).not.toHaveBeenCalled();
+    });
+
     it("defaults off, toggles, warns, preserves native provider metadata and does not register repeatedly", async () => {
         const h = harness();
         expect(h.statuses.at(-1).enabled).toBe(false);
@@ -121,7 +136,7 @@ describe("OpenAI fast mode", () => {
         let finish!: () => void;
         h.ctx.waitForIdle.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
         const command = h.command("on");
-        h.handlers.get("session_shutdown")();
+        h.handlers.get("session_shutdown")({}, h.ctx);
         Object.defineProperty(h.ctx, "hasUI", { get: () => { throw new Error("stale context"); } });
         finish(); await expect(command).resolves.toBeUndefined();
         expect(h.registerProvider).not.toHaveBeenCalled();
@@ -163,7 +178,7 @@ describe("OpenAI fast mode", () => {
         h.handlers.get("model_select")({}, h.ctx);
         expect(h.statuses.at(-1).enabled).toBe(false);
         await h.command("on");
-        h.handlers.get("session_shutdown")();
+        h.handlers.get("session_shutdown")({}, h.ctx);
         expect(h.request()).toBe("simple-stream");
         h.handlers.get("session_start")({}, h.ctx);
         expect(h.statuses.at(-1).enabled).toBe(false);
@@ -195,6 +210,28 @@ describe("OpenAI fast mode", () => {
         expect(message.errorMessage).toBe("Invalid service_tier: priority not supported for this account");
         expect(h.statuses.at(-1).enabled).toBe(true);
         expect(h.nativeStream).not.toHaveBeenCalled();
+    });
+
+    it("unregisters owned wrappers on shutdown and cleanup is idempotent", async () => {
+        const h = harness();
+        await h.command("on");
+        await h.command("off"); // Disabled wrappers also need cleanup.
+        h.handlers.get("session_shutdown")({}, h.ctx);
+        h.handlers.get("session_shutdown")({}, h.ctx);
+        expect(h.unregisterProvider).toHaveBeenCalledExactlyOnceWith("openai-codex");
+        expect(h.registrations.size).toBe(0);
+        expect(h.request()).toBe("simple-stream");
+    });
+
+    it("leaves another extension's replacement registered on shutdown", async () => {
+        const h = harness();
+        await h.command("on");
+        const replacement = { ...h.providers.get("openai-codex") };
+        h.registrations.set("openai-codex", replacement);
+        h.providers.set("openai-codex", replacement);
+        h.handlers.get("session_shutdown")({}, h.ctx);
+        expect(h.unregisterProvider).not.toHaveBeenCalled();
+        expect(h.registrations.get("openai-codex")).toBe(replacement);
     });
 
     it("does not enable when provider installation fails", async () => {

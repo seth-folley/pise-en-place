@@ -2,14 +2,16 @@
 
 Requires Pi 1.2.0 or newer. After installing this package or changing its extension code, run `/reload`.
 
-- `/fast` toggles activation.
+- `/fast` or **Alt+Shift+F** toggles activation.
 - `/fast on` requests priority service for the current session and selected model.
 - `/fast off` stops this extension requesting priority service.
 - `/fast status` reports activation and connection compatibility without changing state.
 
+On shutdown/reload, the extension removes provider wrappers it still owns; another extension's replacement is left untouched. After reload, fast mode can be enabled again normally.
+
 Fast mode **always starts off**. Activation is held only in memory: no settings file or custom session entry is written. New sessions, resume, forks, reload, tree navigation, and provider/model changes reset it. Returning to a previously enabled model does not reactivate it. Thinking-level changes alone do not reset activation or change the reasoning effort.
 
-Commands that change activation wait until the current run is idle. If the session or model changes while waiting, the command leaves the state unchanged and asks you to run it again when a live context is still available. A pending command from an unloaded runtime is cancelled without touching its invalidated context.
+Commands and the Alt+Shift+F shortcut that change activation wait until the current run is idle. The shortcut dispatches `/fast` without changing the editor input or sending a prompt to the model. If the session or model changes while waiting, the command leaves the state unchanged and asks you to run it again when a live context is still available. A pending command from an unloaded runtime is cancelled without touching its invalidated context.
 
 ## Availability and indicator
 
