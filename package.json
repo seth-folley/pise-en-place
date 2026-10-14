@@ -47,6 +47,7 @@
       "./extensions/skills/improve-skill/index.ts",
       "./extensions/ui/dracula-status-line.ts",
       "./extensions/ui/response-time.ts",
+      "./extensions/ui/pretty/index.ts",
       "./extensions/ui/interactive-agent-questions.ts",
       "./extensions/orchestration/subagent/index.ts",
       "./extensions/productivity/autocompact/index.ts",

@@ -86,6 +86,7 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 - `/statusline` cycles status line modes; `/statusline-colors` toggles context color examples. `/statusline debug` toggles an in-memory trace of Pi context-usage readings and shows the samples when disabled.
 - `extensions/ui/response-time.ts` tracks response timing; `/response-time` toggles reporting.
 - `extensions/ui/interactive-agent-questions.ts` exposes the `ask_user` tool for guided TUI questions.
+- `extensions/ui/pretty/index.ts` adds `/pretty` / `/pretty list` to show formatter names, descriptions, and on/off states, plus session-only individual/group/all formatter toggles. Initial Xcode build/log/file-diagnostic views show conservative summaries with up to three errors and expandable raw details; unknown formats retain their original result view. Toggles redraw existing/resumed tool rows without changing execution or stored results. Requires Pi's tool-renderer API (tested on 1.2). See [pretty output](docs/pretty.md).
 - Safety permission prompts and `ask_user` questions send a rich attention notification to their originating Supacode surface; the notifier respects Supacode's notification settings and is inert in other terminals.
 
 ### Subagent orchestration
@@ -139,7 +140,7 @@ extensions/
   safety/          dangerous operation confirmations
   usage/           token/cost ledger and /usage command
   skills/          skill read tracking and skill update flows
-  ui/              status line, response timing, ask_user UI tool
+  ui/              status line, response timing, ask_user UI tool, /pretty formatters
   productivity/    PR lookup, context filtering, local sharing, session helpers, todos, roadmap writer
   coordination/    explicit team enrollment, automatic messaging, inbox/status widget
 src/coordination/  local SQLite broker, socket protocol/client, delivery adapter

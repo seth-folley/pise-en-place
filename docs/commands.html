@@ -43,6 +43,7 @@
 <a class="depth-3" href="#statusline">/statusline</a>
 <a class="depth-3" href="#statusline-colors">/statusline-colors</a>
 <a class="depth-3" href="#response-time">/response-time</a>
+<a class="depth-3" href="#pretty">/pretty</a>
 <a class="depth-2" href="#maintaining-this-reference">Maintaining this reference</a></nav>
 <p class="source">Generated from <a href="commands.md">commands.md</a>. The Markdown file is the agent-friendly source of truth.</p>
 </aside>
@@ -124,6 +125,10 @@
 <tr>
 <td><a href="#response-time"><code>/response-time</code></a></td>
 <td>Toggle response-duration reporting</td>
+</tr>
+<tr>
+<td><a href="#pretty"><code>/pretty</code></a></td>
+<td>Show or toggle package-owned output formatters for this session</td>
 </tr>
 </tbody></table>
 <h2 id="safety">Safety<a class="anchor" href="#safety" aria-label="Link to this section">#</a></h2>
@@ -384,6 +389,19 @@
 <pre><code class="language-text">/response-time
 </code></pre>
 <p>Toggles response-duration reporting, which starts enabled. While enabled, the footer status shows when the agent is responding and the duration of the last completed low-level agent run. The enabled state and timing history are in memory only.</p>
+<h3 id="pretty"><code>/pretty</code><a class="anchor" href="#pretty" aria-label="Link to this section">#</a></h3>
+<pre><code class="language-text">/pretty
+/pretty list
+/pretty xcode-build on|off
+/pretty xcode-log on|off
+/pretty xcode-issues on|off
+/pretty xcode on|off
+/pretty on|off
+/pretty --help
+</code></pre>
+<p>Without arguments or with <code>list</code>, lists all registered package formatters with brief descriptions and current on/off preferences without changing state. The individual IDs control Xcode build, build-log, and file-diagnostic output; <code>xcode</code> controls the group, and bare <code>on</code>/<code>off</code> controls all registered package formatters. Tab completion suggests targets and actions. Invalid input shows usage without changing preferences.</p>
+<p>Preferences start enabled and are session-only: reload, restart, or a new/resumed session resets them. Toggles redraw existing tool rows without changing their expansion state. No settings, ledger, or session-entry writes occur. Disabled formatters use the original view; other built-in/package renderers are not controlled.</p>
+<p>The initial Xcode views show explicit reported fields, returned-entry counts, and up to three errors; expand with Pi&#39;s existing action to see diagnostics and available raw output. Unknown/ambiguous formats, partials, and transport errors preserve the original result view. No live Xcode calls, tool-result rewriting, or success inference from prose. Requires <code>registerToolRenderer</code> (tested on Pi 1.2); unavailable on older hosts lacking that API. Separate CLI exports that load the package start enabled; <code>/share-local</code> disables extensions and does not use these formatters. See <a href="pretty.md">pretty output</a> for recognition limits, nested-call behavior, and renderer precedence.</p>
 <h2 id="maintaining-this-reference">Maintaining this reference<a class="anchor" href="#maintaining-this-reference" aria-label="Link to this section">#</a></h2>
 <p>When adding, removing, or changing a <code>pi.registerCommand(...)</code> surface under <code>extensions/</code>, update this Markdown source and regenerate <code>commands.html</code> in the same change. Source code remains authoritative when behavior and documentation disagree.</p>
 </article>

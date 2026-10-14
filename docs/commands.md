@@ -25,6 +25,7 @@ After changing or installing extensions, run Pi's built-in `/reload` command.
 | [`/statusline`](#statusline) | Cycle the custom footer or trace context readings |
 | [`/statusline-colors`](#statusline-colors) | Preview context-indicator colors |
 | [`/response-time`](#response-time) | Toggle response-duration reporting |
+| [`/pretty`](#pretty) | Show or toggle package-owned output formatters for this session |
 
 ## Safety
 
@@ -401,6 +402,25 @@ Toggles an above-editor preview of the colors used for unknown, low, medium, war
 ```
 
 Toggles response-duration reporting, which starts enabled. While enabled, the footer status shows when the agent is responding and the duration of the last completed low-level agent run. The enabled state and timing history are in memory only.
+
+### `/pretty`
+
+```text
+/pretty
+/pretty list
+/pretty xcode-build on|off
+/pretty xcode-log on|off
+/pretty xcode-issues on|off
+/pretty xcode on|off
+/pretty on|off
+/pretty --help
+```
+
+Without arguments or with `list`, lists all registered package formatters with brief descriptions and current on/off preferences without changing state. The individual IDs control Xcode build, build-log, and file-diagnostic output; `xcode` controls the group, and bare `on`/`off` controls all registered package formatters. Tab completion suggests targets and actions. Invalid input shows usage without changing preferences.
+
+Preferences start enabled and are session-only: reload, restart, or a new/resumed session resets them. Toggles redraw existing tool rows without changing their expansion state. No settings, ledger, or session-entry writes occur. Disabled formatters use the original view; other built-in/package renderers are not controlled.
+
+The initial Xcode views show explicit reported fields, returned-entry counts, and up to three errors; expand with Pi's existing action to see diagnostics and available raw output. Unknown/ambiguous formats, partials, and transport errors preserve the original result view. No live Xcode calls, tool-result rewriting, or success inference from prose. Requires `registerToolRenderer` (tested on Pi 1.2); unavailable on older hosts lacking that API. Separate CLI exports that load the package start enabled; `/share-local` disables extensions and does not use these formatters. See [pretty output](pretty.md) for recognition limits, nested-call behavior, and renderer precedence.
 
 ## Maintaining this reference
 
