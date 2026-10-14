@@ -129,6 +129,11 @@ See the complete command reference in [HTML](docs/commands.html) or its agent-fr
 - `extensions/productivity/cut-input.ts` adds `ctrl+shift+x` to cut the current input and `alt+/` to copy it (when present) and begin a slash command.
 - `extensions/productivity/roadmap-writer.ts` adds `/roadmap <request>` to update `ROADMAP.md` through an isolated Pi process. It checks structured completion and before/after file bytes; changed-but-unconfirmed work gets a review warning, never an automatic task rerun or rollback.
 
+### Hunk helpers (separate CLI)
+
+- `extensions/hunk/collapse-files.ts` adds **Z** (Shift+Z) and **Extensions → Toggle file collapse** to Hunk 0.23.0. Collapsed files keep their header/sidebar entry and show a compact summary; expanding restores raw diff. Visible inline notes can require raw rendering.
+- Load explicitly with `hunk diff --extension ./extensions/hunk/collapse-files.ts`. This is not registered with Pi and makes no global config changes. See [Hunk file collapse](docs/hunk-collapse-files.md).
+
 ### Theme
 
 - `themes/dracula-pro.json` registers the local Dracula Pro theme resources and references Pi's published theme schema. The palette is unchanged.
@@ -141,6 +146,7 @@ extensions/
   usage/           token/cost ledger and /usage command
   skills/          skill read tracking and skill update flows
   ui/              status line, response timing, ask_user UI tool, /pretty formatters
+  hunk/            explicitly loaded Hunk CLI extensions (not Pi extensions)
   productivity/    PR lookup, context filtering, local sharing, session helpers, todos, roadmap writer
   coordination/    explicit team enrollment, automatic messaging, inbox/status widget
 src/coordination/  local SQLite broker, socket protocol/client, delivery adapter

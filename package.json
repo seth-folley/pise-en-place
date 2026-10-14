@@ -33,6 +33,7 @@
     "@earendil-works/pi-coding-agent": "1.2.0",
     "@earendil-works/pi-tui": "1.2.0",
     "@types/node": "^25.9.1",
+    "hunkdiff": "0.23.0",
     "typebox": "^1.1.38",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"
@@ -69,6 +70,11 @@
     "themes": [
       "./themes"
     ]
+  },
+  "overrides": {
+    "hunkdiff": {
+      "shell-quote": "^1.11.0"
+    }
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
