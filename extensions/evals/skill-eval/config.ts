@@ -159,6 +159,7 @@ export async function loadSkillEvalConfig(configFile: string): Promise<ResolvedS
 	const parsed = value as SkillEvalConfig;
 	const config: NormalizedSkillEvalConfig = {
 		...parsed,
+		agent: { ...parsed.agent, ...(parsed.agent.tools ? { tools: parsed.agent.tools.map(tool => tool.trim()) } : {}) },
 		limits: {
 			timeoutSeconds: parsed.limits?.timeoutSeconds ?? 300,
 			onTimeout: parsed.limits?.onTimeout ?? "stop",
@@ -184,6 +185,10 @@ export async function loadSkillEvalConfig(configFile: string): Promise<ResolvedS
 	}
 	for (const [index, tool] of (config.agent.tools ?? []).entries()) {
 		if (!tool.trim()) issues.push(`agent.tools[${index}] must not be blank`);
+		else if (/^[+-]/.test(tool.trim())) issues.push(`agent.tools[${index}] must be an exact name or * pattern, not a +/- defaults modifier`);
+	}
+	if (config.agent.tools && new Set(config.agent.tools).size !== config.agent.tools.length) {
+		issues.push("agent.tools entries must be unique after trimming whitespace");
 	}
 	if (parsed.limits?.maxRetries !== undefined && config.limits.onTimeout !== "retry") {
 		issues.push("limits.maxRetries requires limits.onTimeout: retry");

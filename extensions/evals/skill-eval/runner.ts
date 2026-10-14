@@ -12,6 +12,8 @@ import { RunStorage } from "./storage.ts";
 import type { ExecutionPhase, ExecutionStatus, MonitorEvent, VariantMetrics } from "./types.ts";
 import { applyRemovals, applyReplacements, captureDiff, copyWorkspace, establishBaseline } from "./workspace.ts";
 import { generateReports } from "./report.ts";
+import { createEvalCapabilities } from "./capabilities.ts";
+import { toolNameMatcher } from "./tool-selection.ts";
 
 /** A resumable deadline keeps human dialog latency out of the agent execution budget. */
 class ActiveDeadline {
@@ -137,10 +139,10 @@ async function runVariant(
 	const deadline = new ActiveDeadline(resolved.config.limits.timeoutSeconds * 1000);
 	const agentDir = options.agentDir ?? getAgentDir();
 
+	const allowedTool = resolved.config.agent.tools ? toolNameMatcher(resolved.config.agent.tools) : undefined;
 	const evaluatorExtension: ExtensionFactory = (pi) => {
 		pi.on("tool_call", (event) => {
-			const allowlist = resolved.config.agent.tools;
-			if (!allowlist || allowlist.includes(event.toolName)) return;
+			if (!allowedTool || allowedTool(event.toolName)) return;
 			policyViolation = true;
 			variant.failurePhase = "tool_policy";
 			const detail = `Denied disallowed tool ${event.toolName}`;
@@ -151,11 +153,15 @@ async function runVariant(
 	};
 
 	const settingsManager = SettingsManager.create(workspace, agentDir);
-	const loader = new DefaultResourceLoader({ cwd: workspace, agentDir, settingsManager, extensionFactories: [evaluatorExtension] });
+	let loader: DefaultResourceLoader | undefined;
+	let capabilities: ReturnType<typeof createEvalCapabilities> | undefined;
 
 	try {
 		setPhase("load_resources");
+		capabilities = createEvalCapabilities(resolved.config.agent.tools, { cwd: workspace, agentDir, projectTrusted: () => settingsManager.isProjectTrusted() });
+		loader = new DefaultResourceLoader({ cwd: workspace, agentDir, settingsManager, extensionFactories: [evaluatorExtension, ...capabilities.factories] });
 		await loader.reload();
+		capabilities.assertLoaded(loader);
 		setPhase("create_session");
 		const modelRuntime = await ModelRuntime.create({
 			authPath: path.join(agentDir, "auth.json"),
@@ -176,6 +182,7 @@ async function runVariant(
 			variant.artifacts.session.path = path.relative(storage.runDir, session.sessionFile);
 			variant.artifacts.session.completeness = "partial";
 		}
+		capabilities.assertTools(session);
 
 		setPhase("bind_extensions");
 		const childUI = createChildUI(options.parentUI, resolved.config.dialogs, {
@@ -201,6 +208,7 @@ async function runVariant(
 			abortHandler: () => { void session?.abort(); },
 			onError: (error) => recorder.emit("extension_error", error),
 		});
+		capabilities.assertLoaded(loader);
 		if (interactionBlocked) throw new Error("Child custom UI was blocked by the dialog policy");
 		if (options.signal.aborted) throw options.signal.reason ?? new Error("Evaluation cancelled");
 
@@ -307,7 +315,18 @@ async function runVariant(
 				setPhase("capture_session_evidence");
 				// SDK dispose() does not emit shutdown: flush/stop extension-owned capture
 				// before the final accounting/evidence snapshot (including late usage).
-				await session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
+				// Optional MCP/deferred tools can register after the initial resource snapshot.
+				// Even a failed refresh must still close MCP/extension-owned resources.
+				try {
+					if (capabilities?.factories.length && loader) {
+						variant.artifacts.resources.completeness = "partial";
+						await storage.save();
+						await recorder.writeResources(session, loader);
+						variant.artifacts.resources.completeness = "complete";
+					}
+				} finally {
+					await session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
+				}
 				Object.assign(metrics, usageMetrics(session));
 				await recorder.finalizeSession(session, metrics, completion.finalText);
 				if (session.sessionFile) await chmod(session.sessionFile, 0o600);

@@ -53,6 +53,29 @@ At least one prompt-bearing variant is required. Variant names are filesystem-sa
 
 Validation intentionally does not inspect replacement targets, Git state, model availability, tool availability, symlinks, or project contents.
 
+### Optional Pi 1.2 tools and MCP
+
+Use the existing `agent.tools` allowlist to request Pi's SDK capabilities explicitly:
+
+```yaml
+agent:
+  harness: pi
+  model: anthropic/claude-sonnet-4-5
+  tools: [read, bash, codemode, tool_search, "mcp__xcode__*"]
+```
+
+- `codemode` and `tool_search` load Pi's public built-in factories only when their names match the allowlist. They require Pi 1.2 or newer. Enabling codemode alone does **not** authorize its nested tools: list `read`, `bash`, or other needed names too.
+- Entries are case-sensitive exact names or `*` patterns. Other glob characters are literal. Surrounding whitespace is trimmed once; duplicates after trimming and `+`/`-` defaults modifiers are rejected. This list is an explicit permission boundary, not an additive `defaultTools` setting.
+- Only entries starting with `mcp__` request harness MCP loading. `"mcp__xcode__*"` selects the configured `xcode` namespace; an exact name such as `mcp__xcode__BuildProject` also selects its potential server. Hyphens in server names become underscores in tool identifiers (`dev-radius` → `mcp__dev_radius__*`). `"mcp__*"` deliberately selects all potential servers; a generic `"*"` alone does not request MCP connections.
+- The harness reads selected entries from the configured agent directory's `mcp.json` and the trusted disposable workspace's `.pi/mcp.json`. It preserves full project replacements and the normal `enabled`/`exposure`/`toolExposure` overrides, including global credential fields. Project HTTP `auth.provider` remains prohibited. Unselected entries are not validated, expanded, or connected by this adapter. Selected extension-registered servers are filtered the same way, initially and when registered later. Configuration is snapshotted during resource loading; a startup trust change fails closed.
+- Existing server exposure remains authoritative: include `codemode` for script access, `tool_search` for deferred discovery, or use configured `direct` exposure. Resource tools such as `read_mcp_resource` must also be allowlisted; their names alone do not select servers. Tool-search discovery/activation respects the allowlist, and nested calls still pass through the evaluator policy and ordinary safety hooks.
+- Availability remains lazy like Pi, not an eager guarantee. Servers may register during startup or later; scripts/search wait for the servers they reach. Disabled servers remain disabled. Missing tools or failed connections produce normal SDK notifications/tool evidence; a normally stopped agent is not automatically a semantic failure. Malformed selected configuration and replaced requested built-ins fail preparation before model requests. `validate` does not contact servers or check tool availability.
+- MCP manager configuration writes are disabled in child evals. Connections close on shutdown, including cancellation, timeout, or resource-evidence failure. The existing resource manifest is refreshed before shutdown to include late registrations; a failed refresh is marked partial rather than complete.
+
+Omitting `agent.tools`, or using an ordinary list such as `[read, bash, edit, write]`, preserves existing SDK loading behavior: no newly mounted Pi capability factories or harness MCP connections. Independently discovered extensions remain trusted executable code, not a sandbox; requested built-ins cannot be silently replaced by same-named tools or another MCP manager.
+
+MCP servers may access external state or absolute paths outside the disposable workspace. Codemode also includes Pi's normal non-chat `models` API and can use configured credentials; the tool allowlist is not a network/model-spend sandbox. Select only the capabilities appropriate for the eval. No automatic judge or live-provider verification is added by this support.
+
 ## Optional reviewer rubric
 
 A same-basename sidecar can preserve the eval author's semantic intent without sending grading instructions to the evaluated agent:

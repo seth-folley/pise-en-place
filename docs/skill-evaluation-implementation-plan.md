@@ -121,7 +121,8 @@ variants:
 - `version` must be `1`.
 - `agent.harness` must be `pi` in the first implementation.
 - `agent.thinking` is optional.
-- `agent.tools` is optional. When omitted, Pi's normal enabled-tool defaults apply and there is no narrower evaluator tool policy.
+- `agent.tools` is optional. When omitted, existing SDK enabled-tool defaults apply and there is no narrower evaluator tool policy or newly mounted built-in capability/MCP factory.
+- Explicit tools are trimmed, unique case-sensitive exact names or `*` patterns; `+`/`-` defaults modifiers are not an eval allowlist. Pi 1.2+ `codemode`/`tool_search` requests mount their public factories. Only `mcp__` entries mount the selected-only MCP integration; no separate YAML capability/server fields.
 - `limits` is optional. `limits.timeoutSeconds` is a positive integer and defaults to `300`; the setting applies independently to every variant.
 - Cost enforcement is deferred. V1 records cost but has no `maxCostUsd` field.
 - `dialogs` is optional and defaults to `interactive`. The other V1 value is `auto-reject`.
@@ -287,6 +288,18 @@ Load resources as a normal Pi session would:
 - prompt templates and themes.
 
 The configured model, thinking level, and explicit tools override discovered defaults. When `agent.tools` is omitted, normal Pi tool defaults apply. Retry, auto-compaction, and other session behavior use the normally discovered Pi settings; V1 adds no evaluator-specific controls for them.
+
+### Optional Pi capability integration
+
+Use public root SDK factories only; do not deep-import Pi's MCP loader/validator. Eval-local `capabilities.ts`, `mcp-config.ts`, and `tool-selection.ts` provide opt-in loading, exact/`*` policy matching, and selected-only global/trusted-project configuration merging. A namespace-prefix matcher selects potential server owners before connection without pretending to know their tool lists. Namespace normalization and exposure aliases match Pi's documented conventions.
+
+During factory loading, validate selected server configs using the public synchronous `registerMcpServer` contract with unique temporary names and immediate `unregisterMcpServer`. Mutations commit before binding, leaving no validation registration to connect or retain. Do not read these queued registrations to obtain normalized values; they are not visible then. Normalize only the documented legacy exposure alias locally. Invalid selected configuration is preparation failure; invalid unselected entries are ignored. Preserve project override provenance/global credentials and prohibit project provider auth. Snapshot trusted configuration before binding, and fail closed if trust changes during startup.
+
+Pass the MCP factory a scoped `getMcpServers` view so its initial and late-registration handlers cannot connect unselected extension servers. Requested native helper/MCP implementations must survive resource loading: detected replacements fail before binding, rather than silently defeating policy wrapping. Tool-search discovery/activation is allowlist-scoped; direct and nested calls remain covered by the evaluator's policy hook.
+
+Availability is lazy, like the SDK: do not reject namespaces merely because their servers are not yet registered, or claim a configured namespace proves an exact tool exists. Codemode/search wait for the selected servers they reach; connection failures/unknown tools are ordinary retained SDK/tool evidence. Disabled servers remain disabled. No eager availability probe, automatic judge, live-server check during validation, or new network sandbox is introduced.
+
+Treat MCP configuration as read-only from child manager commands. Close connections through explicit session_shutdown before disposal. Refresh the existing resources manifest before shutdown for late tool registrations; persist partial completeness before attempting refresh, mark complete only on success, and guarantee shutdown even if refresh fails. Do not retain raw MCP configuration, headers/environment values, or credential dumps in the resource manifest. External MCP state and codemode's normal model API are outside disposable-workspace/tool-allowlist isolation.
 
 Record the resolved resource set for trust and reproducibility:
 
@@ -938,7 +951,10 @@ Do not add config fields for deferred features without a separate schema decisio
 | Skills YAML field | Omitted; normal discovery |
 | Git baseline | Fresh disposable repository; no source history |
 | Diff scope | Git-visible files only |
-| Pi resources | Normal discovery, including extensions |
+| Pi resources | Normal discovery, including extensions; optional native Pi 1.2 capability factories requested through agent.tools |
+| Modern tools/MCP | Existing tools-only opt-in; exact/* allowlist, selected MCP namespaces before connection, trusted config merge, lazy availability, no new YAML keys/default connections |
+| Capability substitutions | Fail preparation if requested native codemode/tool_search/MCP implementation is replaced |
+| MCP cleanup/evidence | Read-only manager config; explicit shutdown even on refresh failure; refreshed resource manifest with partial completeness on failure |
 | Semantic outcomes | Separate `skill-eval-reviewer` workflow; execution harness records status/findings only |
 | Operational stop conditions | Timeout, cancellation, harness error, or completed variant with tool-policy finding |
 | Tool-policy violation | Deny the call, return a denied result, allow current session to continue, then stop later variants |

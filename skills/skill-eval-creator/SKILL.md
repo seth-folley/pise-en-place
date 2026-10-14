@@ -84,7 +84,11 @@ The required agent fields are:
 
 `thinking`, `tools`, and `limits` are optional. `limits.onTimeout` defaults to `stop`; use `continue` to run later variants after a timeout, or `retry` with `maxRetries` to retry a timed-out variant from its prepared baseline. Ask when the user has not supplied a required model or when tool access or timeout behavior materially affects the eval.
 
-Use an explicit tool allowlist when tool usage is part of the evaluation contract. Otherwise, omitting `tools` uses Pi's normal defaults.
+Use an explicit tool allowlist when tool usage is part of the evaluation contract. Otherwise, omitting `tools` preserves the harness's existing SDK defaults and does not newly mount Pi capability factories or MCP connections.
+
+For Pi 1.2+ evals, optional `codemode` and `tool_search` are requested through this same list; no separate capability or server YAML keys exist. Entries are exact names or `*` patterns, not `+`/`-` defaults modifiers. Example: `[read, codemode, tool_search, "mcp__xcode__*"]`. Codemode does not implicitly authorize nested tools: list their names/patterns too. Only `mcp__` entries opt into harness MCP loading and select potential server namespaces before connection. Use normalized tool identifiers (`dev-radius` → `mcp__dev_radius__*`); avoid broad `mcp__*` unless all servers are deliberately needed. Resource-tool names alone do not select servers.
+
+Confirm MCP access when it materially affects the evaluation: selected servers may operate on external state, and the disposable workspace is not an MCP/network/model-spend sandbox. Codemode has Pi's normal `models` API. Respect configured exposure (`codemode`, `deferred` via tool_search, or direct); do not promise eager tool availability or live verification. Servers can register later, and connection/tool errors are retained evidence rather than automatic semantic failure. Requested built-ins replaced by custom extensions and malformed selected config fail preparation. See the format documentation for full selection, trust, cleanup, and read-only configuration behavior.
 
 Skills are not listed in YAML. Pi discovers skills, extensions, settings, prompts, and context files from the prepared workspace and normal global resources.
 
