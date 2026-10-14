@@ -4,8 +4,9 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import statusLine from "../extensions/ui/dracula-status-line.ts";
 import { AUTOCOMPACT_STATUS_EVENT, AUTOCOMPACT_STATUS_REQUEST } from "../src/shared/autocompact-status.ts";
+import { FAST_STATUS_EVENT, FAST_STATUS_REQUEST } from "../src/shared/fast-status.ts";
 
-async function harness(providerFirst = false) {
+async function harness(providerFirst = false, fastFirst = false) {
     const events = createEventBus();
     const handlers = new Map<string, (...args: any[]) => any>();
     const commands = new Map<string, any>();
@@ -14,6 +15,10 @@ async function harness(providerFirst = false) {
     const status = { sessionId: "one", enabled: true, ceilingTokens: 250_000 };
     if (providerFirst) events.on(AUTOCOMPACT_STATUS_REQUEST, id => {
         if (id === "one") events.emit(AUTOCOMPACT_STATUS_EVENT, status);
+    });
+    const fastStatus = { sessionId: "one", provider: "openai-codex", model: "test", enabled: true };
+    if (fastFirst) events.on(FAST_STATUS_REQUEST, id => {
+        if (id === "one") events.emit(FAST_STATUS_EVENT, fastStatus);
     });
     const api = {
         events,
@@ -29,7 +34,7 @@ async function harness(providerFirst = false) {
     let branch: unknown[] = [];
     const ctx = {
         sessionManager: { getSessionId: () => "one", getBranch: () => branch, getEntries: () => entries },
-        model: { id: "test", contextWindow: 1_000_000 },
+        model: { id: "test", provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api", reasoning: true, contextWindow: 1_000_000 },
         getContextUsage: () => ({ tokens, percent: tokens === null ? null : tokens / 10_000, contextWindow: 1_000_000 }),
         ui: {
             setFooter: (factory: any) => {
@@ -46,7 +51,7 @@ async function harness(providerFirst = false) {
     statusLine(api as unknown as ExtensionAPI);
     await handlers.get("session_start")!({}, ctx);
     return {
-        events, status, requestRender, unsubscribeBranch, entries,
+        events, status, fastStatus, ctx, requestRender, unsubscribeBranch, entries,
         branch: (values: unknown[]) => { branch = values; },
         assistantComplete: () => handlers.get("message_end")!({ message: { role: "assistant", stopReason: "stop", usage: { cacheRead: 20 } } }, ctx),
         render: (width = 120) => footer!.render(width),
@@ -113,5 +118,47 @@ describe("Dracula footer autocompact symbol", () => {
         h.events.emit(AUTOCOMPACT_STATUS_EVENT, h.status);
         expect(h.requestRender).toHaveBeenCalledTimes(after);
         expect(h.unsubscribeBranch).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("footer fast indicator", () => {
+    it("places the highlighted indicator after thinking in both styles and bounds narrow output", async () => {
+        const h = await harness(false, true);
+        for (let style = 0; style < 2; style++) {
+            const line = stripVTControlCharacters(h.render()[0]);
+            expect(line).toMatch(/test.*off ⚡ fast/);
+            expect(h.render()[0]).toContain("\u001b[36m⚡ fast\u001b[0m");
+            for (const width of [1, 20, 50, 80, 120]) {
+                expect(h.render(width).every(row => visibleWidth(row) <= width)).toBe(true);
+            }
+            if (style === 0) await h.cycle();
+        }
+        h.events.emit(FAST_STATUS_EVENT, { ...h.fastStatus, enabled: false });
+        expect(h.render()[0]).not.toContain("⚡ fast");
+    });
+
+    it("filters malformed/foreign status and mismatched or unsupported models", async () => {
+        const h = await harness();
+        h.events.emit(FAST_STATUS_EVENT, {});
+        h.events.emit(FAST_STATUS_EVENT, { ...h.fastStatus, sessionId: "other" });
+        expect(h.requestRender).not.toHaveBeenCalled();
+        h.events.emit(FAST_STATUS_EVENT, h.fastStatus);
+        expect(h.render()[0]).toContain("⚡ fast");
+        h.ctx.model = { ...h.ctx.model!, id: "other" };
+        expect(h.render()[0]).not.toContain("⚡ fast");
+        h.ctx.model = { ...h.ctx.model!, id: "test", baseUrl: "https://proxy.example/v1" };
+        expect(h.render()[0]).not.toContain("⚡ fast");
+    });
+
+    it("repaints once after replacement and unsubscribes when the footer is off", async () => {
+        const h = await harness(false, true);
+        await h.cycle();
+        const before = h.requestRender.mock.calls.length;
+        h.events.emit(FAST_STATUS_EVENT, h.fastStatus);
+        expect(h.requestRender).toHaveBeenCalledTimes(before + 1);
+        await h.cycle();
+        const after = h.requestRender.mock.calls.length;
+        h.events.emit(FAST_STATUS_EVENT, h.fastStatus);
+        expect(h.requestRender).toHaveBeenCalledTimes(after);
     });
 });
