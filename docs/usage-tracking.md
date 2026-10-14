@@ -82,7 +82,7 @@ A workspace may override the project identity and/or branch for newly recorded u
 {
   "version": 1,
   "project": {
-    "gitRemote": "github.com/sethfolley/pise-en-place",
+    "gitRemote": "github.com/owner/repo",
     "gitBranch": "feature/usage-attribution"
   },
   "tags": ["ios", "feature-work"]

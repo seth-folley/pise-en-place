@@ -2,7 +2,7 @@
 
 ## Project purpose
 
-`pise-en-place` is Seth's personal Pi extension package and should be treated as the source of truth for Pi workflow customizations in this repo. It contains project-owned extensions, themes, shared helpers, and documentation for Pi behavior such as safety confirmations, usage tracking, skill upkeep, status UI, PR helpers, markdown output, local sharing, session helpers, and roadmap writing.
+`pise-en-place` is a Pi extension package and should be treated as the source of truth for Pi workflow customizations in this repo. It contains project-owned extensions, themes, shared helpers, and documentation for Pi behavior such as safety confirmations, usage tracking, skill upkeep, status UI, PR helpers, markdown output, local sharing, session helpers, and roadmap writing.
 
 When working in this repository, prefer adding or changing code here instead of creating global files under `~/.pi/agent/`. Global Pi locations are runtime/install targets, not the development source for this package.
 
@@ -35,7 +35,7 @@ Pi loads resources declared in `package.json` under the `pi` key. After changing
 
 ## Development workflow
 
-Before adding a new command, shortcut, tool, status UI, persistent file, or other user-facing surface, confirm the desired interface with Seth unless it was already specified.
+Before adding a new command, shortcut, tool, status UI, persistent file, or other user-facing surface, confirm the desired interface with the user unless it was already specified.
 
 When implementing Pi behavior:
 
@@ -63,3 +63,4 @@ npm run validate
 - Prefer append-only JSONL for simple private runtime ledgers; migrate to SQLite only if needed.
 - Use existing shared helpers before creating new utilities.
 - Keep generated/runtime artifacts out of git.
+- Keep documentation portable: avoid personal names and machine-specific paths or setup details. Use repository-relative commands, standard runtime paths, or clearly labeled placeholders in examples.

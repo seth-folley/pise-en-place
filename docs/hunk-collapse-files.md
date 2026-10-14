@@ -12,10 +12,11 @@ From this repository:
 hunk diff --extension ./extensions/hunk/collapse-files.ts
 ```
 
-To review another repository, use the absolute extension path from that checkout:
+To review another repository, run from that repository and replace
+`/absolute/path/to/pise-en-place` with the absolute path to this package's checkout:
 
 ```bash
-hunk diff --extension /Users/sethfolley/Development/Personal/pise-en-place/extensions/hunk/collapse-files.ts
+hunk diff --extension /absolute/path/to/pise-en-place/extensions/hunk/collapse-files.ts
 ```
 
 Select a file and press **Z** (Shift+Z), or choose **Extensions → Toggle file
@@ -37,11 +38,12 @@ command shows “No file selected” and does nothing.
 ## Load globally from this repo
 
 Add the directory to `~/.config/hunk/config.toml` (append it if an
-`[extensions].paths` list already exists):
+`[extensions].paths` list already exists). Replace `/absolute/path/to/pise-en-place`
+with the absolute path to your checkout:
 
 ```toml
 [extensions]
-paths = ["/Users/sethfolley/Development/Personal/pise-en-place/extensions/hunk"]
+paths = ["/absolute/path/to/pise-en-place/extensions/hunk"]
 ```
 
 Normal `hunk diff` now loads the extension without `--extension`. The source

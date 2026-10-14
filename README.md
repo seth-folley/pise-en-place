@@ -1,21 +1,21 @@
 # pise-en-place
 
-Personal Pi extension package for Seth's workflow customizations. This repo is the source of truth for Pi safety checks, usage tracking, status UI, skill upkeep, context filtering, PR helpers, markdown output, local sharing, session todos, and roadmap maintenance.
+Pi extension package for agent workflow customizations. This repo is the source of truth for Pi safety checks, usage tracking, status UI, skill upkeep, context filtering, PR helpers, markdown output, local sharing, session todos, and roadmap maintenance.
 
 ## Install as a local Pi package
 
-Install this repo instead of symlinking files into `~/.pi/agent/extensions`:
+From the repository root, install this repo instead of symlinking files into `~/.pi/agent/extensions`:
 
 ```bash
-pi install /Users/sethfolley/Development/Personal/pise-en-place
+pi install .
 ```
 
 Pi adds the local package path to `~/.pi/agent/settings.json` and loads the resources declared in `package.json` under the `pi` key.
 
-For project-only use, install into project settings instead:
+For project-only use, run this from the target project's root, replacing `/absolute/path/to/pise-en-place` with the path to your checkout:
 
 ```bash
-pi install -l /Users/sethfolley/Development/Personal/pise-en-place
+pi install -l /absolute/path/to/pise-en-place
 ```
 
 After changing extension code in an active Pi session, run Pi's `/reload` command.
