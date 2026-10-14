@@ -12,6 +12,8 @@ import {
     recordAssistantContextUsage,
 } from "../../src/shared/context-usage-display.ts";
 
+import { FAST_STATUS_EVENT, FAST_STATUS_REQUEST, fastIndicatorFor, isFastStatus, type FastStatus } from "../../src/shared/fast-status.ts";
+
 type FooterStyle = "dracula" | "minimal" | "off";
 
 type ContextTrace = {
@@ -100,11 +102,19 @@ export default function (pi: ExtensionAPI) {
                 tui.requestRender();
             });
             pi.events.emit(AUTOCOMPACT_STATUS_REQUEST, sessionId);
+            let fastStatus: FastStatus | undefined;
+            const unsubscribeFast = pi.events.on(FAST_STATUS_EVENT, status => {
+                if (!isFastStatus(status) || status.sessionId !== sessionId) return;
+                fastStatus = status;
+                tui.requestRender();
+            });
+            pi.events.emit(FAST_STATUS_REQUEST, sessionId);
 
             return {
                 dispose() {
                     unsubscribe();
                     unsubscribeAutoCompact();
+                    unsubscribeFast();
                 },
                 invalidate() {},
                 render(width: number): string[] {
@@ -119,6 +129,8 @@ export default function (pi: ExtensionAPI) {
                     const thinkingText = thinkingLevel
                         ? theme.fg(thinkingColor(thinkingLevel), thinkingLevel)
                         : undefined;
+                    const fastLabel = fastIndicatorFor(fastStatus, ctx.model);
+                    const fastText = fastLabel ? theme.fg("dim", " ") + theme.fg("accent", fastLabel) : "";
                     const inputText = formatCount(input);
                     const outputText = formatCount(output);
                     const totalText = formatCount(totals.totalTokens);
@@ -166,7 +178,7 @@ export default function (pi: ExtensionAPI) {
                         const left =
                             theme.fg("accent", "π") +
                             theme.fg("dim", ` ${model}`) +
-                            (thinkingText ? theme.fg("dim", " · ") + thinkingText : "");
+                            (thinkingText ? theme.fg("dim", " · ") + thinkingText : "") + fastText;
                         const right = branch ? theme.fg("muted", branch) : "";
                         const tokenUsage =
                             theme.fg("muted", "↑ ") +
@@ -190,7 +202,7 @@ export default function (pi: ExtensionAPI) {
 
                     const modelPart =
                         theme.fg("text", model) +
-                        (thinkingText ? theme.fg("dim", " ") + thinkingText : "");
+                        (thinkingText ? theme.fg("dim", " ") + thinkingText : "") + fastText;
                     const leftParts = [
                         theme.fg("accent", theme.bold("π")),
                         modelPart,
